@@ -1,26 +1,54 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-bg: #0b132b;
+  --color-bg-card: #1c2541;
+  --color-bg-hover: #22305c;
+  --color-border: rgba(255, 255, 255, 0.1);
+  
+  --color-primary: #1d4ed8;
+  --color-primary-hover: #1e40af;
+  --color-secondary: #3b82f6;
+  --color-accent: #8b5cf6;
+
+  --color-success: #10b981;
+  --color-danger: #ef4444;
+  --color-warning: #f59e0b;
+
+  --color-text-title: #ffffff;
+  --color-text-body: #cbd5e1;
+  --color-text-secondary: #94a3b8;
+
+  --font-heading: var(--font-heading);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-text-body);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  color: var(--color-text-title);
+  letter-spacing: 0.03em;
+}
+
+/* Ocultar barra de scroll para vista móvil limpia */
+::-webkit-scrollbar {
+  display: none;
+}
+* {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
