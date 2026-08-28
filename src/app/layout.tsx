@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Bebas_Neue, Poppins, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import SmartphoneFrame from "@/components/SmartphoneFrame";
+import PwaRegister from "@/components/PwaRegister";
 import { StudentProvider } from "@/context/StudentContext";
 
 const bebasNeue = Bebas_Neue({
@@ -27,12 +28,17 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  themeColor: "#0b132b",
 };
 
 export const metadata: Metadata = {
-  title: "Dance Factory - Portal del Alumno",
-  description: "Reserva tus clases, consulta tu bono y accede a la escuela.",
+  title: "Dance Factory - App Oficial",
+  description: "App oficial de Dance Factory Alcorcón para Alumnos y Profesores. Carnet digital, reservas y bonos.",
   manifest: "/manifest.json",
+  icons: {
+    icon: "/logo.jpg",
+    apple: "/logo.jpg",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -51,6 +57,7 @@ export default function RootLayout({
       className={`${bebasNeue.variable} ${poppins.variable} ${jetBrainsMono.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-[#070b16] text-[var(--color-text-body)]">
+        <PwaRegister />
         <StudentProvider>
           <SmartphoneFrame>
             {children}
