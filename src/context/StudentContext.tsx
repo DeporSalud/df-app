@@ -284,8 +284,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
             fecha_nacimiento: studentData.fecha_nacimiento || null,
             plan_activo: planActivo,
             clases_restantes: remainingClasses,
-            estado: "Activo",
-            matricula_pagada: false
+            estado: "Activo"
           }
         ])
         .select()

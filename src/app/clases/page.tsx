@@ -382,8 +382,7 @@ function ClasesContent() {
       // Direct payment simulation
       await supabase.from("alumnos").update({
         plan_activo: selectedBonoForPayment.nombre,
-        clases_restantes: nuevoSaldo,
-        matricula_pagada: true
+        clases_restantes: nuevoSaldo
       }).eq("id", currentStudent.id);
 
       // Save to shared payments ledger for Admin CRM
