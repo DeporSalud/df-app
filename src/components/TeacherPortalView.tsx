@@ -229,12 +229,9 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
         await supabase
           .from("asistencias")
           .insert([{
-            clase_id: selectedClase.id,
             alumno_id: studentId,
-            fecha_hora: new Date().toISOString(),
-            tipo_acceso: "pase_lista_profesor",
-            profesor_responsable: teacherName,
-            sede: selectedClase.sede || "tejar"
+            clase_id: selectedClase.id,
+            fecha_hora: new Date().toISOString()
           }]);
 
         setAsistenciasRegistradas(prev => [...prev, studentId]);
