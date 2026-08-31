@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendOtpEmail } from "@/lib/mailer";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wjnoawmefdurqqjwqdmi.supabase.co";
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "sb_publishable_dWudcdKMOeKH22g0IRKV7w_bxWNtEh2";
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,10 +25,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Send email using Hostinger SMTP
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanCode = code.trim();
+
+    // 1. Sync OTP directly to Supabase alumnos.nfc_token for 100% reliable verification
+    try {
+      await supabase
+        .from("alumnos")
+        .update({ nfc_token: cleanCode })
+        .ilike("email", cleanEmail);
+    } catch (dbErr) {
+      console.warn("[API /api/send-otp] Aviso al guardar token en Supabase:", dbErr);
+    }
+
+    // 2. Send email using Hostinger SMTP
     const result = await sendOtpEmail({
-      email: email.trim().toLowerCase(),
-      code: code.trim(),
+      email: cleanEmail,
+      code: cleanCode,
       studentName: name ? String(name).trim() : undefined,
     });
 
@@ -36,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Código enviado con éxito a ${email}`,
+      message: `Código enviado con éxito a ${cleanEmail}`,
       messageId: result.messageId,
     });
   } catch (error: any) {

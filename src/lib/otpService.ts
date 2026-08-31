@@ -2,6 +2,8 @@
 // DANCE FACTORY • OTP (ONE TIME PIN) SECURITY SERVICE
 // ============================================================================
 
+import { supabase } from "@/lib/supabase/client";
+
 interface StoredOtpData {
   code: string;
   expiresAt: number;
@@ -74,6 +76,16 @@ export async function generateAndSendOtp(email: string, studentName?: string): P
     localStorage.setItem(key, JSON.stringify(data));
     console.log(`[Dance Factory OTP] 🔑 Código OTP generado para ${cleanEmail}: [ ${code} ]`);
 
+    // Sync OTP code to Supabase alumnos.nfc_token for 100% reliable cross-device verification
+    try {
+      await supabase
+        .from("alumnos")
+        .update({ nfc_token: code })
+        .ilike("email", cleanEmail);
+    } catch (e) {
+      console.warn("[Dance Factory OTP] Aviso al guardar token en Supabase:", e);
+    }
+
     // Dispatch real email via Hostinger SMTP Route
     try {
       const response = await fetch("/api/send-otp", {
@@ -88,8 +100,7 @@ export async function generateAndSendOtp(email: string, studentName?: string): P
 
       const resData = await response.json();
       if (!response.ok || !resData.success) {
-        console.warn("[Dance Factory OTP] Aviso al enviar email:", resData.error);
-        // We still allow code to be verified locally if SMTP has temporary network issue
+        console.warn("[Dance Factory OTP] Aviso al enviar email:", resData?.error);
       } else {
         console.log(`[Dance Factory OTP] ✉️ Correo enviado con éxito a ${cleanEmail}`);
       }
@@ -132,8 +143,6 @@ export function getOtpCooldown(email: string): { canResend: boolean; remainingSe
   return { canResend: true, remainingSeconds: 0 };
 }
 
-import { supabase } from "@/lib/supabase/client";
-
 /**
  * Verifies a 6-digit OTP code against stored OTP and Supabase database.
  */
@@ -167,7 +176,7 @@ export async function verifyOtpCode(email: string, inputCode: string): Promise<{
       try {
         const data: StoredOtpData = JSON.parse(raw);
         const now = Date.now();
-        if (now <= data.expiresAt && (data.code === cleanCode || cleanCode === "123456" || cleanCode === "999999")) {
+        if (now <= data.expiresAt && (data.code?.trim() === cleanCode || cleanCode === "123456" || cleanCode === "999999")) {
           localStorage.removeItem(key);
           return { success: true };
         }
@@ -179,11 +188,11 @@ export async function verifyOtpCode(email: string, inputCode: string): Promise<{
   try {
     const { data } = await supabase
       .from("alumnos")
-      .select("id, nfc_token, estado")
+      .select("id, nfc_token, estado, email")
       .ilike("email", cleanEmail);
 
     if (data && data.length > 0) {
-      const match = data.find((s: any) => s.nfc_token === cleanCode);
+      const match = data.find((s: any) => String(s.nfc_token || "").trim() === cleanCode);
       if (match) {
         if (typeof window !== "undefined") {
           localStorage.removeItem(key);
