@@ -194,7 +194,7 @@ export default function LoginPage() {
     } else {
       triggerHaptic([40, 30, 40]);
       setIsPinError(true);
-      const secStatus = registerFailedTeacherAttempt(
+      const secStatus = await registerFailedTeacherAttempt(
         selectedTeacher.id, 
         selectedTeacher.name, 
         selectedTeacher.email, 

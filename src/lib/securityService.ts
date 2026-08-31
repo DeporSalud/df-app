@@ -215,12 +215,29 @@ export async function syncTeacherLockoutWithSupabase(teacherId: string): Promise
       .from("alumnos")
       .select("estado")
       .eq("id", teacherUuid)
-      .single();
+      .maybeSingle();
 
-    if (data && data.estado && !data.estado.toLowerCase().includes("bloqueado")) {
-      // Reception unlocked in Supabase! Clear local lock
-      localStorage.removeItem(`${STORAGE_KEY_PREFIX}teacher_${teacherId}`);
-      window.dispatchEvent(new Event("df_security_lock_updated"));
+    if (data && data.estado) {
+      if (data.estado.toLowerCase().includes("bloqueado")) {
+        const state: SecurityState = {
+          failedCount: MAX_ATTEMPTS,
+          lockedUntil: Infinity,
+          lockoutStreak: 1,
+          isPermanentLock: true
+        };
+        localStorage.setItem(`${STORAGE_KEY_PREFIX}teacher_${teacherId}`, JSON.stringify(state));
+      } else {
+        // Reception unlocked in Supabase! Clear local lock
+        const localKey = `${STORAGE_KEY_PREFIX}teacher_${teacherId}`;
+        const localRaw = localStorage.getItem(localKey);
+        if (localRaw) {
+          const parsed = JSON.parse(localRaw);
+          if (parsed.isPermanentLock || parsed.failedCount >= MAX_ATTEMPTS) {
+            localStorage.removeItem(localKey);
+            window.dispatchEvent(new Event("df_security_lock_updated"));
+          }
+        }
+      }
     }
   } catch (e) {}
 
@@ -242,30 +259,39 @@ export async function syncAllTeachersLockoutsWithSupabase(teacherIds: string[]):
     for (const id of teacherIds) {
       const uuid = getTeacherUuid(id);
       const isBlockedInDb = blockedUuids.has(uuid);
+      const localKey = `${STORAGE_KEY_PREFIX}teacher_${id}`;
+      const localRaw = localStorage.getItem(localKey);
+      const localState: SecurityState | null = localRaw ? JSON.parse(localRaw) : null;
 
       if (isBlockedInDb) {
         lockedIds.add(id);
-        const state = {
-          failedCount: MAX_ATTEMPTS,
-          lockedUntil: Infinity,
-          lockoutStreak: 1,
-          isPermanentLock: true
-        };
-        localStorage.setItem(`${STORAGE_KEY_PREFIX}teacher_${id}`, JSON.stringify(state));
-      } else {
-        // Teacher is active in Supabase: clear local storage if any exists
-        const localKey = `${STORAGE_KEY_PREFIX}teacher_${id}`;
-        if (localStorage.getItem(localKey)) {
-          localStorage.removeItem(localKey);
+        if (!localState || !localState.isPermanentLock) {
+          const state: SecurityState = {
+            failedCount: MAX_ATTEMPTS,
+            lockedUntil: Infinity,
+            lockoutStreak: 1,
+            isPermanentLock: true
+          };
+          localStorage.setItem(localKey, JSON.stringify(state));
         }
+      } else if (localState && localState.isPermanentLock) {
+        // Reception unblocked in DB (no longer in blockedUuids), clear local permanent lock!
+        localStorage.removeItem(localKey);
+      } else if (localState && localState.failedCount >= MAX_ATTEMPTS) {
+        lockedIds.add(id);
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    for (const id of teacherIds) {
+      const status = checkTeacherLockout(id);
+      if (status.isLocked) lockedIds.add(id);
+    }
+  }
 
   return lockedIds;
 }
 
-export function registerFailedTeacherAttempt(teacherId: string, teacherName: string, teacherEmail?: string, teacherSede?: string): LockoutStatus {
+export async function registerFailedTeacherAttempt(teacherId: string, teacherName: string, teacherEmail?: string, teacherSede?: string): Promise<LockoutStatus> {
   if (typeof window === "undefined") {
     return { isLocked: false, isPermanentLock: false, remainingSeconds: 0, attemptsLeft: 2, failedCount: 1, maxAttempts: MAX_ATTEMPTS };
   }
@@ -292,7 +318,7 @@ export function registerFailedTeacherAttempt(teacherId: string, teacherName: str
     // Sync block to Supabase alumnos so Reception CRM can see it and unlock
     const teacherUuid = getTeacherUuid(teacherId);
     try {
-      supabase
+      await supabase
         .from("alumnos")
         .upsert({
           id: teacherUuid,
@@ -302,13 +328,6 @@ export function registerFailedTeacherAttempt(teacherId: string, teacherName: str
           plan_activo: "Docente Dance Factory",
           sede: teacherSede || "castilla",
           estado: "Bloqueado por 3 fallos de PIN"
-        })
-        .then(({ error, data }) => {
-          if (error) {
-            console.warn("[Security] Error upserting teacher lock to Supabase:", error);
-          } else {
-            console.log("[Security] Teacher lock synced to Supabase successfully:", teacherName);
-          }
         });
     } catch (err) {
       console.warn("[Security] Error syncing teacher lock to Supabase:", err);
