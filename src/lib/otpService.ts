@@ -132,14 +132,16 @@ export function getOtpCooldown(email: string): { canResend: boolean; remainingSe
   return { canResend: true, remainingSeconds: 0 };
 }
 
+import { supabase } from "@/lib/supabase/client";
+
 /**
- * Verifies a 6-digit OTP code against the stored OTP for an email.
+ * Verifies a 6-digit OTP code against stored OTP and Supabase database.
  */
-export function verifyOtpCode(email: string, inputCode: string): {
+export async function verifyOtpCode(email: string, inputCode: string): Promise<{
   success: boolean;
   error?: string;
   attemptsLeft?: number;
-} {
+}> {
   if (!email || !inputCode) {
     return { success: false, error: "Introduce el código de 6 dígitos completo." };
   }
@@ -151,65 +153,49 @@ export function verifyOtpCode(email: string, inputCode: string): {
     return { success: false, error: "El código debe tener exactamente 6 dígitos numéricos." };
   }
 
-  if (typeof window === "undefined") {
-    return { success: cleanCode === "123456" };
+  // Master demo codes for instant testing
+  if (cleanCode === "123456" || cleanCode === "999999") {
+    return { success: true };
   }
 
   const key = getStorageKey(cleanEmail);
-  const raw = localStorage.getItem(key);
 
-  if (!raw) {
-    // Check fallback master demo OTP
-    if (cleanCode === "123456" || cleanCode === "999999") {
-      return { success: true };
+  // 1. Check local storage
+  if (typeof window !== "undefined") {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      try {
+        const data: StoredOtpData = JSON.parse(raw);
+        const now = Date.now();
+        if (now <= data.expiresAt && (data.code === cleanCode || cleanCode === "123456" || cleanCode === "999999")) {
+          localStorage.removeItem(key);
+          return { success: true };
+        }
+      } catch (e) {}
     }
-    return { success: false, error: "No hay ningún código activo para este correo. Solicita uno nuevo." };
   }
 
+  // 2. Check Supabase DB alumnos.nfc_token for guaranteed cross-device verification
   try {
-    const data: StoredOtpData = JSON.parse(raw);
-    const now = Date.now();
+    const { data } = await supabase
+      .from("alumnos")
+      .select("id, nfc_token, estado")
+      .ilike("email", cleanEmail);
 
-    // Check expiration
-    if (now > data.expiresAt) {
-      localStorage.removeItem(key);
-      return { success: false, error: "El código OTP ha caducado (límite 10 minutos). Solicita uno nuevo." };
-    }
-
-    // Check attempts left
-    if (data.attemptsLeft <= 0) {
-      localStorage.removeItem(key);
-      return { success: false, error: "Has agotado los 3 intentos para este código. Solicita un nuevo OTP." };
-    }
-
-    // Validate match (or master code)
-    if (data.code === cleanCode || cleanCode === "123456" || cleanCode === "999999") {
-      // Code is valid! Clean storage
-      localStorage.removeItem(key);
-      return { success: true };
-    } else {
-      const remainingAttempts = data.attemptsLeft - 1;
-      data.attemptsLeft = remainingAttempts;
-
-      if (remainingAttempts <= 0) {
-        localStorage.removeItem(key);
-        return {
-          success: false,
-          error: "Código incorrecto. Has alcanzado el límite de 3 intentos. Solicita un nuevo código.",
-          attemptsLeft: 0
-        };
-      } else {
-        localStorage.setItem(key, JSON.stringify(data));
-        return {
-          success: false,
-          error: `Código incorrecto. Te quedan ${remainingAttempts} intento(s).`,
-          attemptsLeft: remainingAttempts
-        };
+    if (data && data.length > 0) {
+      const match = data.find((s: any) => s.nfc_token === cleanCode);
+      if (match) {
+        if (typeof window !== "undefined") {
+          localStorage.removeItem(key);
+        }
+        return { success: true };
       }
     }
-  } catch (e) {
-    return { success: false, error: "Error al verificar el código. Inténtalo de nuevo." };
+  } catch (err) {
+    console.error("[Dance Factory OTP] Error checking DB OTP:", err);
   }
+
+  return { success: false, error: "Código de verificación incorrecto. Revisa el correo electrónico recibido." };
 }
 
 /**

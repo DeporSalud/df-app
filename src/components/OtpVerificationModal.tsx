@@ -124,7 +124,7 @@ export default function OtpVerificationModal({
 
     await new Promise(r => setTimeout(r, 400)); // Smooth UI feel
 
-    let result: { success: boolean; error?: string } = verifyOtpCode(email, codeToVerify);
+    let result: { success: boolean; error?: string } = await verifyOtpCode(email, codeToVerify);
 
     if (onVerifyCode) {
       const customRes = await onVerifyCode(codeToVerify);

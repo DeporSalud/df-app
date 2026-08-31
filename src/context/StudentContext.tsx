@@ -269,9 +269,12 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         return { success: false, error: "Ya existe un alumno registrado con este correo electrónico." };
       }
 
-      const token = Math.floor(1000 + Math.random() * 8999).toString();
       const planActivo = studentData.plan_activo || "Sin Plan Activo";
       const remainingClasses = planActivo.includes("Bono 10") ? 10 : planActivo.includes("Bono 4") ? 4 : (planActivo === "Sin Plan Activo" ? 0 : null);
+
+      // Generate initial OTP and dispatch branded email via Hostinger SMTP
+      const otpRes = await generateAndSendOtp(cleanEmail, studentData.nombre_completo);
+      const generatedOtp = otpRes.code || Math.floor(100000 + Math.random() * 900000).toString();
 
       const { data, error } = await supabase
         .from("alumnos")
@@ -281,7 +284,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
             email: cleanEmail,
             telefono: studentData.telefono.trim(),
             dni: studentData.dni?.trim() ? studentData.dni.trim().toUpperCase() : null,
-            nfc_token: token,
+            nfc_token: generatedOtp,
             sede: studentData.sede || "tejar",
             direccion: studentData.direccion?.trim() || null,
             fecha_nacimiento: studentData.fecha_nacimiento || null,
@@ -290,16 +293,12 @@ export function StudentProvider({ children }: { children: ReactNode }) {
             estado: "Pendiente"
           }
         ])
-        .select()
-        .single();
+        .select();
 
-      if (error || !data) {
+      if (error) {
         console.error("Error creating student:", error);
         return { success: false, error: error?.message || "No se pudo registrar la cuenta. Inténtalo de nuevo." };
       }
-
-      // Generate initial OTP and dispatch branded email via Hostinger SMTP
-      await generateAndSendOtp(cleanEmail, studentData.nombre_completo);
 
       return { 
         success: true, 
@@ -314,7 +313,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
   const verifyStudentWithOtp = async (email: string, code: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const cleanEmail = email.trim().toLowerCase();
-      const verification = verifyOtpCode(cleanEmail, code);
+      const verification = await verifyOtpCode(cleanEmail, code);
 
       if (!verification.success) {
         return { success: false, error: verification.error || "Código de verificación incorrecto." };
