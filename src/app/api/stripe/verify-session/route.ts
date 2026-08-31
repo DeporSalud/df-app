@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
       // Get current student balance
       const { data: student } = await supabase
         .from("alumnos")
-        .select("id, clases_restantes, plan_activo, matricula_pagada")
+        .select("id, clases_restantes, plan_activo")
         .eq("id", studentId)
         .single();
 
@@ -61,7 +61,6 @@ export async function POST(req: NextRequest) {
           .update({
             plan_activo: bonoName || "Bono de Clases",
             clases_restantes: updatedBalance,
-            matricula_pagada: true,
           })
           .eq("id", studentId);
       }

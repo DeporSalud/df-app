@@ -151,7 +151,23 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         .order("nombre_completo", { ascending: true });
       
       if (!error && data && data.length > 0) {
-        setStudents(data);
+        const enriched = data.map((s: any) => {
+          const hasClasses = typeof s.clases_restantes === "number" && s.clases_restantes > 0;
+          const hasActivePlan = s.plan_activo && s.plan_activo !== "Sin Plan Activo" && !s.plan_activo.startsWith("Pendiente:");
+          const isMarkedPaid = typeof window !== "undefined" && (
+            localStorage.getItem(`df_matricula_paid_${s.id}`) === "true" ||
+            localStorage.getItem(`df_matricula_paid_${s.email?.toLowerCase()}`) === "true"
+          );
+
+          const isPaid = Boolean(s.matricula_pagada || hasClasses || hasActivePlan || isMarkedPaid);
+
+          return {
+            ...s,
+            matricula_pagada: isPaid
+          };
+        });
+
+        setStudents(enriched);
         
         const savedRole = typeof window !== "undefined" ? localStorage.getItem("df_auth_role") as UserRole : null;
         if (savedRole) {
@@ -160,7 +176,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
 
         const savedSessionId = typeof window !== "undefined" ? localStorage.getItem("df_student_session_id") : null;
         if (savedSessionId) {
-          const found = data.find(s => s.id === savedSessionId || s.email?.toLowerCase() === savedSessionId?.toLowerCase());
+          const found = enriched.find(s => s.id === savedSessionId || s.email?.toLowerCase() === savedSessionId?.toLowerCase());
           if (found) setCurrentStudentIdState(found.id);
         }
 

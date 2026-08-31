@@ -425,12 +425,25 @@ function ClasesContent() {
     }
   };
 
+  function checkIsStudentMatriculaPaid(student: any): boolean {
+    if (!student) return false;
+    if (student.matricula_pagada === true) return true;
+    if (typeof student.clases_restantes === "number" && student.clases_restantes > 0) return true;
+    if (student.plan_activo && student.plan_activo !== "Sin Plan Activo" && !student.plan_activo.startsWith("Pendiente:")) return true;
+    if (typeof window !== "undefined") {
+      if (student.id && localStorage.getItem(`df_matricula_paid_${student.id}`) === "true") return true;
+      if (student.email && localStorage.getItem(`df_matricula_paid_${student.email.toLowerCase()}`) === "true") return true;
+    }
+    return false;
+  }
+
   const handleStripeCheckout = async () => {
     if (!selectedBonoForPayment || !currentStudent?.id) return;
     setIsStripeLoading(true);
 
     try {
-      const isFirstBonoOfYear = !currentStudent?.matricula_pagada;
+      const isMatriculaPaid = checkIsStudentMatriculaPaid(currentStudent);
+      const isFirstBonoOfYear = !isMatriculaPaid;
       const res = await fetch("/api/stripe/create-checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -472,7 +485,8 @@ function ClasesContent() {
     if (!selectedBonoForPayment || !currentStudent?.id) return;
 
     const basePrice = parseFloat(selectedBonoForPayment.precio.replace(/[^0-9.]/g, "")) || 45;
-    const isFirstBonoOfYear = !currentStudent?.matricula_pagada;
+    const isMatriculaPaid = checkIsStudentMatriculaPaid(currentStudent);
+    const isFirstBonoOfYear = !isMatriculaPaid;
     const matriculaCost = isFirstBonoOfYear ? 15.00 : 0.00;
     const totalAmount = basePrice + matriculaCost;
 
@@ -489,9 +503,12 @@ function ClasesContent() {
       console.warn("[Dance Factory] Error al registrar solicitud en base de datos:", dbErr);
     }
 
-    // 2. Local fallback
+    // 2. Local fallback & persist matricula state
     if (typeof window !== "undefined") {
       try {
+        if (currentStudent.id) localStorage.setItem(`df_matricula_paid_${currentStudent.id}`, "true");
+        if (currentStudent.email) localStorage.setItem(`df_matricula_paid_${currentStudent.email.toLowerCase()}`, "true");
+
         const rawReqs = localStorage.getItem("pending_bono_requests");
         const reqs = rawReqs ? JSON.parse(rawReqs) : [];
         const newReq = {
@@ -536,7 +553,8 @@ function ClasesContent() {
     if (!selectedBonoForPayment || !currentStudent?.id) return;
 
     const basePrice = parseFloat(selectedBonoForPayment.precio.replace(/[^0-9.]/g, "")) || 45;
-    const isFirstBonoOfYear = !currentStudent?.matricula_pagada;
+    const isMatriculaPaid = checkIsStudentMatriculaPaid(currentStudent);
+    const isFirstBonoOfYear = !isMatriculaPaid;
     const matriculaCost = isFirstBonoOfYear ? 15.00 : 0.00;
     const totalAmount = basePrice + matriculaCost;
 
@@ -553,9 +571,12 @@ function ClasesContent() {
       console.warn("[Dance Factory] Error al registrar solicitud en base de datos:", dbErr);
     }
 
-    // 2. Local fallback
+    // 2. Local fallback & persist matricula state
     if (typeof window !== "undefined") {
       try {
+        if (currentStudent.id) localStorage.setItem(`df_matricula_paid_${currentStudent.id}`, "true");
+        if (currentStudent.email) localStorage.setItem(`df_matricula_paid_${currentStudent.email.toLowerCase()}`, "true");
+
         const rawReqs = localStorage.getItem("pending_bono_requests");
         const reqs = rawReqs ? JSON.parse(rawReqs) : [];
         const newReq = {
@@ -1051,7 +1072,8 @@ function ClasesContent() {
             {/* Price Summary Breakdown */}
             {(() => {
               const basePrice = parseFloat(selectedBonoForPayment.precio.replace(/[^0-9.]/g, "")) || 45;
-              const isFirstBono = !currentStudent?.matricula_pagada;
+              const isMatriculaPaid = checkIsStudentMatriculaPaid(currentStudent);
+              const isFirstBono = !isMatriculaPaid;
               const matriculaCost = isFirstBono ? 15.00 : 0.00;
               const totalToPay = basePrice + matriculaCost;
 
