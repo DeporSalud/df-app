@@ -153,12 +153,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         const enriched = data.map((s: any) => {
           const hasClasses = typeof s.clases_restantes === "number" && s.clases_restantes > 0;
           const hasActivePlan = s.plan_activo && s.plan_activo !== "Sin Plan Activo" && !s.plan_activo.startsWith("Pendiente:");
-          const isMarkedPaid = typeof window !== "undefined" && (
-            localStorage.getItem(`df_matricula_paid_${s.id}`) === "true" ||
-            localStorage.getItem(`df_matricula_paid_${s.email?.toLowerCase()}`) === "true"
-          );
-
-          const isPaid = Boolean(s.matricula_pagada || hasClasses || hasActivePlan || isMarkedPaid);
+          const isPaid = Boolean(s.matricula_pagada || hasClasses || hasActivePlan);
 
           return {
             ...s,

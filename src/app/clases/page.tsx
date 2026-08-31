@@ -268,6 +268,17 @@ function ClasesContent() {
   };
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("df_matricula_paid_")) {
+          localStorage.removeItem(key);
+        }
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     fetchClasesAndAssignments();
   }, [selectedSede, selectedDay, currentStudent?.id]);
 
@@ -430,10 +441,6 @@ function ClasesContent() {
     if (student.matricula_pagada === true) return true;
     if (typeof student.clases_restantes === "number" && student.clases_restantes > 0) return true;
     if (student.plan_activo && student.plan_activo !== "Sin Plan Activo" && !student.plan_activo.startsWith("Pendiente:")) return true;
-    if (typeof window !== "undefined") {
-      if (student.id && localStorage.getItem(`df_matricula_paid_${student.id}`) === "true") return true;
-      if (student.email && localStorage.getItem(`df_matricula_paid_${student.email.toLowerCase()}`) === "true") return true;
-    }
     return false;
   }
 
@@ -503,12 +510,9 @@ function ClasesContent() {
       console.warn("[Dance Factory] Error al registrar solicitud en base de datos:", dbErr);
     }
 
-    // 2. Local fallback & persist matricula state
+    // 2. Local fallback
     if (typeof window !== "undefined") {
       try {
-        if (currentStudent.id) localStorage.setItem(`df_matricula_paid_${currentStudent.id}`, "true");
-        if (currentStudent.email) localStorage.setItem(`df_matricula_paid_${currentStudent.email.toLowerCase()}`, "true");
-
         const rawReqs = localStorage.getItem("pending_bono_requests");
         const reqs = rawReqs ? JSON.parse(rawReqs) : [];
         const newReq = {
@@ -571,12 +575,9 @@ function ClasesContent() {
       console.warn("[Dance Factory] Error al registrar solicitud en base de datos:", dbErr);
     }
 
-    // 2. Local fallback & persist matricula state
+    // 2. Local fallback
     if (typeof window !== "undefined") {
       try {
-        if (currentStudent.id) localStorage.setItem(`df_matricula_paid_${currentStudent.id}`, "true");
-        if (currentStudent.email) localStorage.setItem(`df_matricula_paid_${currentStudent.email.toLowerCase()}`, "true");
-
         const rawReqs = localStorage.getItem("pending_bono_requests");
         const reqs = rawReqs ? JSON.parse(rawReqs) : [];
         const newReq = {
