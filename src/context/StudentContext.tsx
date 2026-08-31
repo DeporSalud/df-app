@@ -85,17 +85,16 @@ const FALLBACK_STUDENTS: Student[] = [
   {
     id: "demo_fran",
     nombre_completo: "Fran Sarciat",
-    email: "fran.sarciat@gmail.com",
+    email: "fransarciat@gmail.com",
     telefono: "623 456 789",
-    plan_activo: "Clases Regulares (41€/mes)",
-    clases_restantes: null,
+    plan_activo: "Sin Plan Activo",
+    clases_restantes: 0,
     estado: "Activo",
     sede: "tejar",
     dni: "50894721K",
     nfc_token: "3918",
     fecha_nacimiento: "1995-04-12",
-    matricula_pagada: true,
-    matricula_fecha: "2026-09-01"
+    matricula_pagada: false
   },
   {
     id: "demo_lucia",
