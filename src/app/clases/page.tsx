@@ -19,7 +19,13 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronRight,
-  AlertCircle
+  AlertCircle,
+  Copy,
+  Check,
+  Landmark,
+  ShieldCheck,
+  Smartphone,
+  Loader2
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase/client";
@@ -361,127 +367,205 @@ function ClasesContent() {
     });
   };
 
-  const handleSimularCompraBono = async (metodo: "tarjeta" | "recepcion") => {
+  const [paymentMethodTab, setPaymentMethodTab] = useState<"stripe" | "transferencia" | "recepcion">("stripe");
+  const [isStripeLoading, setIsStripeLoading] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  // Handle Stripe Payment Return
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get("payment");
+    const sessionId = params.get("session_id");
+
+    if (payment === "success" && sessionId) {
+      const verifyStripePayment = async () => {
+        try {
+          const res = await fetch("/api/stripe/verify-session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId })
+          });
+          const data = await res.json();
+          if (data.success) {
+            if (refetchStudents) await refetchStudents();
+            setModal({
+              isOpen: true,
+              title: "🎉 ¡Pago con Tarjeta Completado!",
+              message: `Has adquirido tu ${data.bonoName} por ${data.totalAmount} € mediante Stripe.\n\nTu saldo ha sido actualizado a ${data.updatedBalance === 999 ? "Ilimitado" : `${data.updatedBalance} clases`} disponibles para reservar en el calendario.`,
+              type: "success",
+              confirmText: "Reservar en Calendario",
+              onConfirm: () => {
+                setActiveTab("openclass");
+                router.replace("/clases?tab=openclass");
+              }
+            });
+          }
+        } catch (e) {
+          console.error("Error verificando sesión de Stripe:", e);
+        }
+      };
+      verifyStripePayment();
+    } else if (payment === "cancelled") {
+      setModal({
+        isOpen: true,
+        title: "Pago Cancelado",
+        message: "El proceso de pago con tarjeta en Stripe no se completó. No se ha realizado ningún cargo.",
+        type: "info"
+      });
+      router.replace("/clases?tab=bonos");
+    }
+  }, [router, refetchStudents]);
+
+  const handleCopy = (text: string, fieldId: string) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopiedField(fieldId);
+      setTimeout(() => setCopiedField(null), 2500);
+    }
+  };
+
+  const handleStripeCheckout = async () => {
     if (!selectedBonoForPayment || !currentStudent?.id) return;
+    setIsStripeLoading(true);
 
-    let clasesAñadidas = 4;
-    if (selectedBonoForPayment.id === "Bono 8 clases") clasesAñadidas = 8;
-    else if (selectedBonoForPayment.id === "Bono 10 clases") clasesAñadidas = 10;
-    else if (selectedBonoForPayment.id === "Mensualidad Ilimitada") clasesAñadidas = 999;
-    else if (selectedBonoForPayment.id === "Clase Suelta") clasesAñadidas = 1;
+    try {
+      const isFirstBonoOfYear = !currentStudent?.matricula_pagada;
+      const res = await fetch("/api/stripe/create-checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bonoId: selectedBonoForPayment.id,
+          studentId: currentStudent.id,
+          studentName: currentStudent.nombre_completo,
+          studentEmail: currentStudent.email,
+          isFirstBonoOfYear,
+          returnUrl: window.location.origin + "/clases"
+        })
+      });
 
-    const saldoAnterior = typeof currentStudent.clases_restantes === "number" ? currentStudent.clases_restantes : 0;
-    const nuevoSaldo = selectedBonoForPayment.id === "Mensualidad Ilimitada" ? 999 : saldoAnterior + clasesAñadidas;
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        setModal({
+          isOpen: true,
+          title: "Error con la Pasarela de Pago",
+          message: data.error || "No se pudo iniciar la sesión de Stripe. Inténtalo de nuevo.",
+          type: "warning"
+        });
+        setIsStripeLoading(false);
+      }
+    } catch (err: any) {
+      console.error("Error initiating Stripe checkout:", err);
+      setModal({
+        isOpen: true,
+        title: "Error de Conexión",
+        message: "No se pudo contactar con la pasarela de pagos.",
+        type: "warning"
+      });
+      setIsStripeLoading(false);
+    }
+  };
+
+  const handleConfirmarTransferencia = async () => {
+    if (!selectedBonoForPayment || !currentStudent?.id) return;
 
     const basePrice = parseFloat(selectedBonoForPayment.precio.replace(/[^0-9.]/g, "")) || 45;
     const isFirstBonoOfYear = !currentStudent?.matricula_pagada;
     const matriculaCost = isFirstBonoOfYear ? 15.00 : 0.00;
     const totalAmount = basePrice + matriculaCost;
 
-    if (metodo === "tarjeta") {
-      // Direct payment simulation
-      await supabase.from("alumnos").update({
-        plan_activo: selectedBonoForPayment.nombre,
-        clases_restantes: nuevoSaldo
-      }).eq("id", currentStudent.id);
-
-      // Save to shared payments ledger for Admin CRM
-      if (typeof window !== "undefined") {
-        try {
-          const rawPayments = localStorage.getItem("df_pagos_transacciones_v1");
-          const allPayments = rawPayments ? JSON.parse(rawPayments) : [];
-          const now = new Date();
-          const conceptText = isFirstBonoOfYear 
-            ? `${selectedBonoForPayment.nombre} + Matrícula Anual (15€)`
-            : `${selectedBonoForPayment.nombre} (App Alumno)`;
-
-          const newTx = {
-            id: "pago_online_" + Date.now(),
-            numero_recibo: "REC-" + now.getFullYear() + "-" + Math.floor(1000 + Math.random() * 9000),
-            fecha_hora: now.toISOString(),
-            fecha_corta: now.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" }),
-            hora_corta: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-            alumno_id: currentStudent.id,
-            alumno_nombre: currentStudent.nombre_completo,
-            alumno_dni: currentStudent.dni,
-            alumno_telefono: currentStudent.telefono,
-            concepto: conceptText,
-            categoria: "bono",
-            importe: totalAmount,
-            metodo_pago: "Stripe",
-            sede: normalizeSede(currentStudent.sede || "tejar"),
-            atendido_por: "Pago Online App Alumno",
-            notas: isFirstBonoOfYear ? "Incluye matrícula anual de 15€ (Temporada 2026-2027)" : "Compra de bono en app de alumnos",
-            estado: "Cobrado"
-          };
-          localStorage.setItem("df_pagos_transacciones_v1", JSON.stringify([newTx, ...allPayments]));
-          window.dispatchEvent(new Event("df_pagos_updated"));
-        } catch (e) {
-          console.error("Error logging payment:", e);
-        }
+    if (typeof window !== "undefined") {
+      try {
+        const rawReqs = localStorage.getItem("pending_bono_requests");
+        const reqs = rawReqs ? JSON.parse(rawReqs) : [];
+        const newReq = {
+          id: "req_transf_" + Date.now(),
+          student_id: currentStudent.id,
+          student_name: currentStudent.nombre_completo,
+          student_email: currentStudent.email || "",
+          bono_nombre: isFirstBonoOfYear 
+            ? `${selectedBonoForPayment.nombre} (+15€ Matrícula)` 
+            : selectedBonoForPayment.nombre,
+          bono_precio: `${totalAmount.toFixed(2)} €`,
+          metodo_pago: "Transferencia Bancaria",
+          fecha: new Date().toLocaleDateString("es-ES"),
+          sede: normalizeSede(currentStudent.sede || "tejar")
+        };
+        localStorage.setItem("pending_bono_requests", JSON.stringify([newReq, ...reqs]));
+        window.dispatchEvent(new Event("df_pending_bonos_updated"));
+      } catch (e) {
+        console.error("Error saving pending transfer request:", e);
       }
-
-      if (refetchStudents) await refetchStudents();
-
-      logActivity({
-        origen: "alumno",
-        tipo_evento: "reserva_bono",
-        descripcion: `Compra de ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} € ${isFirstBonoOfYear ? "incl. 15€ matrícula anual" : ""}) mediante pago online con tarjeta`,
-        usuario_afectado: currentStudent.nombre_completo,
-        sede: formatSedeName(currentStudent.sede || "tejar")
-      });
-
-      setSelectedBonoForPayment(null);
-      setModal({
-        isOpen: true,
-        title: "✓ ¡Pago Completado con Éxito!",
-        message: `Has adquirido tu ${selectedBonoForPayment.nombre} por un total de ${totalAmount.toFixed(2)} €${isFirstBonoOfYear ? " (incluye 15 € de matrícula anual para todo el curso)" : ""}.\n\nTu saldo se ha actualizado a ${nuevoSaldo === 999 ? "Ilimitado" : `${nuevoSaldo} clases`} disponibles para reservar en el calendario.`,
-        type: "success",
-        confirmText: "Reservar en Calendario",
-        onConfirm: () => setActiveTab("openclass")
-      });
-    } else {
-      // Reception reservation simulation with CRM pending_bono_requests synchronization
-      if (typeof window !== "undefined") {
-        try {
-          const rawReqs = localStorage.getItem("pending_bono_requests");
-          const reqs = rawReqs ? JSON.parse(rawReqs) : [];
-          const newReq = {
-            id: "req_" + Date.now(),
-            student_id: currentStudent.id,
-            student_name: currentStudent.nombre_completo,
-            student_email: currentStudent.email || "",
-            bono_nombre: isFirstBonoOfYear 
-              ? `${selectedBonoForPayment.nombre} (+15€ Matrícula)` 
-              : selectedBonoForPayment.nombre,
-            bono_precio: `${totalAmount.toFixed(2)} €`,
-            fecha: new Date().toLocaleDateString("es-ES"),
-            sede: normalizeSede(currentStudent.sede || "tejar")
-          };
-          localStorage.setItem("pending_bono_requests", JSON.stringify([newReq, ...reqs]));
-          window.dispatchEvent(new Event("df_pending_bonos_updated"));
-        } catch (e) {
-          console.error("Error saving pending bono request:", e);
-        }
-      }
-
-      logActivity({
-        origen: "alumno",
-        tipo_evento: "reserva_bono",
-        descripcion: `Solicitud de reserva de ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} € ${isFirstBonoOfYear ? "incl. 15€ matrícula" : ""}) para abonar en recepción`,
-        usuario_afectado: currentStudent.nombre_completo,
-        sede: formatSedeName(currentStudent.sede || "tejar")
-      });
-
-      setSelectedBonoForPayment(null);
-      setModal({
-        isOpen: true,
-        title: "✓ Solicitud Registrada",
-        message: `Hemos registrado tu petición para el ${selectedBonoForPayment.nombre} por un importe de ${totalAmount.toFixed(2)} €${isFirstBonoOfYear ? " (incluye 15 € de matrícula anual de temporada)" : ""}.\n\nPodrás abonarlo en la recepción de tu estudio (en efectivo o datáfono) cuando asistas a tu próxima clase.`,
-        type: "info",
-        confirmText: "Aceptar"
-      });
     }
+
+    logActivity({
+      origen: "alumno",
+      tipo_evento: "reserva_bono",
+      descripcion: `Solicitud de ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) por Transferencia Bancaria`,
+      usuario_afectado: currentStudent.nombre_completo,
+      sede: formatSedeName(currentStudent.sede || "tejar")
+    });
+
+    setSelectedBonoForPayment(null);
+    setModal({
+      isOpen: true,
+      title: "✓ Transferencia Notificada a Recepción",
+      message: `Hemos registrado tu solicitud para el ${selectedBonoForPayment.nombre} por un importe de ${totalAmount.toFixed(2)} € mediante Transferencia Bancaria.\n\nEn cuanto recepción verifique la recepción del importe en la cuenta de Santander o CaixaBank, tu saldo se actualizará automáticamente.`,
+      type: "success",
+      confirmText: "Aceptar"
+    });
+  };
+
+  const handleSolicitarRecepcion = async () => {
+    if (!selectedBonoForPayment || !currentStudent?.id) return;
+
+    const basePrice = parseFloat(selectedBonoForPayment.precio.replace(/[^0-9.]/g, "")) || 45;
+    const isFirstBonoOfYear = !currentStudent?.matricula_pagada;
+    const matriculaCost = isFirstBonoOfYear ? 15.00 : 0.00;
+    const totalAmount = basePrice + matriculaCost;
+
+    if (typeof window !== "undefined") {
+      try {
+        const rawReqs = localStorage.getItem("pending_bono_requests");
+        const reqs = rawReqs ? JSON.parse(rawReqs) : [];
+        const newReq = {
+          id: "req_rec_" + Date.now(),
+          student_id: currentStudent.id,
+          student_name: currentStudent.nombre_completo,
+          student_email: currentStudent.email || "",
+          bono_nombre: isFirstBonoOfYear 
+            ? `${selectedBonoForPayment.nombre} (+15€ Matrícula)` 
+            : selectedBonoForPayment.nombre,
+          bono_precio: `${totalAmount.toFixed(2)} €`,
+          metodo_pago: "Recepción (Efectivo/Datáfono)",
+          fecha: new Date().toLocaleDateString("es-ES"),
+          sede: normalizeSede(currentStudent.sede || "tejar")
+        };
+        localStorage.setItem("pending_bono_requests", JSON.stringify([newReq, ...reqs]));
+        window.dispatchEvent(new Event("df_pending_bonos_updated"));
+      } catch (e) {
+        console.error("Error saving pending bono request:", e);
+      }
+    }
+
+    logActivity({
+      origen: "alumno",
+      tipo_evento: "reserva_bono",
+      descripcion: `Solicitud de ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) para abonar en recepción`,
+      usuario_afectado: currentStudent.nombre_completo,
+      sede: formatSedeName(currentStudent.sede || "tejar")
+    });
+
+    setSelectedBonoForPayment(null);
+    setModal({
+      isOpen: true,
+      title: "✓ Solicitud Registrada",
+      message: `Hemos registrado tu petición para el ${selectedBonoForPayment.nombre} por un importe de ${totalAmount.toFixed(2)} €${isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : ""}.\n\nPodrás abonarlo en la recepción de tu estudio (en efectivo o datáfono) cuando asistas a tu próxima clase.`,
+      type: "info",
+      confirmText: "Aceptar"
+    });
   };
 
   return (
@@ -917,21 +1001,26 @@ function ClasesContent() {
         </div>
       )}
 
-      {/* MODAL: CHECKOUT DE BONO */}
+      {/* MODAL: CHECKOUT DE BONO (3 MÉTODOS DE PAGO) */}
       {selectedBonoForPayment && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-3xl w-full max-w-sm p-6 space-y-4 shadow-2xl relative animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-3xl w-full max-w-md p-5 sm:p-6 space-y-4 shadow-2xl relative animate-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto">
             
+            {/* Header */}
             <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-3">
-              <h3 className="text-base font-bold text-white">Comprar {selectedBonoForPayment.nombre}</h3>
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-secondary)] block">Pasarela Oficial</span>
+                <h3 className="text-base font-extrabold text-white">Comprar {selectedBonoForPayment.nombre}</h3>
+              </div>
               <button
                 onClick={() => setSelectedBonoForPayment(null)}
-                className="text-slate-400 hover:text-white cursor-pointer font-bold text-sm"
+                className="w-8 h-8 rounded-full bg-[var(--color-bg)] text-slate-400 hover:text-white flex items-center justify-center cursor-pointer border border-[var(--color-border)] transition-colors"
               >
                 ✕
               </button>
             </div>
 
+            {/* Price Summary Breakdown */}
             {(() => {
               const basePrice = parseFloat(selectedBonoForPayment.precio.replace(/[^0-9.]/g, "")) || 45;
               const isFirstBono = !currentStudent?.matricula_pagada;
@@ -939,17 +1028,17 @@ function ClasesContent() {
               const totalToPay = basePrice + matriculaCost;
 
               return (
-                <div className="p-4 rounded-2xl bg-[var(--color-bg)] border border-[var(--color-border)] space-y-3">
+                <div className="p-3.5 rounded-2xl bg-[var(--color-bg)] border border-[var(--color-border)] space-y-2.5">
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-slate-400">Subtotal {selectedBonoForPayment.nombre}:</span>
                     <span className="font-mono font-bold text-white">{basePrice.toFixed(2)} €</span>
                   </div>
 
                   {isFirstBono ? (
-                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-xs">
+                    <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-xs">
                       <div>
                         <span className="font-bold text-amber-300 block">Matrícula Anual Oficial</span>
-                        <span className="text-[10px] text-slate-400">Cuota anual de inscripción (1er bono)</span>
+                        <span className="text-[10px] text-slate-400">Inscripción anual de temporada (1er bono)</span>
                       </div>
                       <span className="font-mono font-bold text-amber-400 text-sm">+15.00 €</span>
                     </div>
@@ -961,36 +1050,195 @@ function ClasesContent() {
                   )}
 
                   <div className="flex justify-between items-center pt-2 border-t border-[var(--color-border)]">
-                    <span className="text-xs font-bold text-slate-300">Total a Pagar:</span>
+                    <span className="text-xs font-bold text-slate-300">Total Final a Abonar:</span>
                     <span className="text-2xl font-black font-mono text-[var(--color-secondary)]">
                       {totalToPay.toFixed(2)} €
                     </span>
                   </div>
-
-                  <p className="text-[10px] text-slate-400 leading-tight">
-                    {selectedBonoForPayment.desc}
-                  </p>
                 </div>
               );
             })()}
 
-            <div className="space-y-2 pt-2">
-              <button
-                onClick={() => handleSimularCompraBono("tarjeta")}
-                className="w-full py-3.5 px-4 rounded-2xl bg-[var(--color-secondary)] hover:bg-[var(--color-secondary)]/90 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-[var(--color-secondary)]/20 cursor-pointer transition-all active:scale-95"
-              >
-                <CreditCard size={16} />
-                <span>Pagar Ahora con Tarjeta (Online)</span>
-              </button>
+            {/* Payment Method Tabs */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block">
+                Selecciona Método de Pago:
+              </label>
 
-              <button
-                onClick={() => handleSimularCompraBono("recepcion")}
-                className="w-full py-3 px-4 rounded-2xl bg-[var(--color-bg)] hover:bg-[var(--color-bg-hover)] text-slate-300 font-bold text-xs border border-[var(--color-border)] flex items-center justify-center gap-2 cursor-pointer transition-all"
-              >
-                <Building2 size={16} />
-                <span>Abonar en Recepción</span>
-              </button>
+              <div className="grid grid-cols-3 gap-1.5 p-1 bg-[var(--color-bg)] rounded-2xl border border-[var(--color-border)] text-center">
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethodTab("stripe")}
+                  className={`py-2 px-2 rounded-xl text-[11px] font-bold transition-all flex flex-col items-center gap-1 cursor-pointer ${
+                    paymentMethodTab === "stripe"
+                      ? "bg-[var(--color-primary)] text-white shadow-md"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <CreditCard size={15} />
+                  <span>Stripe</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethodTab("transferencia")}
+                  className={`py-2 px-2 rounded-xl text-[11px] font-bold transition-all flex flex-col items-center gap-1 cursor-pointer ${
+                    paymentMethodTab === "transferencia"
+                      ? "bg-amber-500 text-slate-950 shadow-md"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <Landmark size={15} />
+                  <span>Transferencia</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethodTab("recepcion")}
+                  className={`py-2 px-2 rounded-xl text-[11px] font-bold transition-all flex flex-col items-center gap-1 cursor-pointer ${
+                    paymentMethodTab === "recepcion"
+                      ? "bg-[var(--color-secondary)] text-slate-950 shadow-md"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <Building2 size={15} />
+                  <span>Recepción</span>
+                </button>
+              </div>
             </div>
+
+            {/* TAB 1: STRIPE CHECKOUT */}
+            {paymentMethodTab === "stripe" && (
+              <div className="space-y-3 pt-1 animate-in fade-in duration-150">
+                <div className="p-3 rounded-2xl bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 text-xs text-slate-300 space-y-1.5">
+                  <div className="flex items-center gap-2 font-bold text-white">
+                    <ShieldCheck size={16} className="text-[var(--color-secondary)]" />
+                    <span>Pago Seguro con Tarjeta y Apple/Google Pay</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-normal">
+                    Serás redirigido a la pasarela bancaria cifrada de Stripe. Tu saldo de bono se activará al instante tras completar el pago.
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleStripeCheckout}
+                  disabled={isStripeLoading}
+                  className="w-full py-3.5 px-4 rounded-2xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-[var(--color-primary)]/25 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {isStripeLoading ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Conectando con Stripe...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CreditCard size={16} />
+                      <span>Pagar con Tarjeta / Apple Pay</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* TAB 2: TRANSFERENCIA BANCARIA (1-CLICK COPY) */}
+            {paymentMethodTab === "transferencia" && (
+              <div className="space-y-3 pt-1 animate-in fade-in duration-150">
+                <p className="text-[11px] text-slate-400 leading-tight">
+                  Realiza una transferencia a cualquiera de nuestras cuentas oficiales de Dance Factory. Pulsa en cada dato para copiarlo:
+                </p>
+
+                {/* Santander Card */}
+                <div className="p-3 rounded-2xl bg-[var(--color-bg)] border border-red-500/30 space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-red-400 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+                      Banco Santander
+                    </span>
+                    <button
+                      onClick={() => handleCopy("ES9600490566112210634052", "santander")}
+                      className="px-2.5 py-1 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 text-[10px] font-bold border border-red-500/30 flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                    >
+                      {copiedField === "santander" ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                      <span>{copiedField === "santander" ? "¡Copiado!" : "Copiar IBAN"}</span>
+                    </button>
+                  </div>
+                  <p className="font-mono text-xs font-bold text-white tracking-wider">
+                    ES96 0049 0566 1122 1063 4052
+                  </p>
+                </div>
+
+                {/* CaixaBank Card */}
+                <div className="p-3 rounded-2xl bg-[var(--color-bg)] border border-blue-500/30 space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-blue-400 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
+                      CaixaBank
+                    </span>
+                    <button
+                      onClick={() => handleCopy("ES9521002852480210377186", "caixa")}
+                      className="px-2.5 py-1 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 text-[10px] font-bold border border-blue-500/30 flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                    >
+                      {copiedField === "caixa" ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                      <span>{copiedField === "caixa" ? "¡Copiado!" : "Copiar IBAN"}</span>
+                    </button>
+                  </div>
+                  <p className="font-mono text-xs font-bold text-white tracking-wider">
+                    ES95 2100 2852 4802 1037 7186
+                  </p>
+                </div>
+
+                {/* Concepto Card */}
+                {(() => {
+                  const conceptText = `Bono ${currentStudent?.nombre_completo || "Alumno"}`;
+                  return (
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-xs">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block uppercase font-bold">Concepto de Transferencia:</span>
+                        <span className="font-bold text-amber-300">{conceptText}</span>
+                      </div>
+                      <button
+                        onClick={() => handleCopy(conceptText, "concepto")}
+                        className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold border border-amber-500/40 flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                      >
+                        {copiedField === "concepto" ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                        <span>{copiedField === "concepto" ? "¡Copiado!" : "Copiar"}</span>
+                      </button>
+                    </div>
+                  );
+                })()}
+
+                <button
+                  onClick={handleConfirmarTransferencia}
+                  className="w-full py-3.5 px-4 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-400/20 cursor-pointer transition-all active:scale-95"
+                >
+                  <CheckCircle2 size={16} />
+                  <span>He Realizado la Transferencia</span>
+                </button>
+              </div>
+            )}
+
+            {/* TAB 3: PAGO EN RECEPCIÓN */}
+            {paymentMethodTab === "recepcion" && (
+              <div className="space-y-3 pt-1 animate-in fade-in duration-150">
+                <div className="p-3 rounded-2xl bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-slate-300 space-y-1.5">
+                  <div className="flex items-center gap-2 font-bold text-white">
+                    <Building2 size={16} className="text-[var(--color-secondary)]" />
+                    <span>Abonar en el Mostrador de Recepción</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-normal">
+                    Tu petición quedará registrada en el sistema de la escuela. Podrás abonar el importe en efectivo o con datáfono en <strong>Studio 1 (Plaza El Tejar)</strong> o <strong>Studio 2 (Paseo Castilla)</strong> antes de entrar a tu clase.
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleSolicitarRecepcion}
+                  className="w-full py-3.5 px-4 rounded-2xl bg-[var(--color-secondary)] hover:bg-[var(--color-secondary)]/90 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 shadow-lg shadow-[var(--color-secondary)]/20 cursor-pointer transition-all active:scale-95"
+                >
+                  <Building2 size={16} />
+                  <span>Solicitar para Abonar en Recepción</span>
+                </button>
+              </div>
+            )}
 
           </div>
         </div>
