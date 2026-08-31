@@ -160,9 +160,9 @@ export default function MisClasesPage() {
   if (!isAuthenticated) return null;
 
   return (
-    <div className="flex flex-col h-full w-full bg-[var(--color-bg)] overflow-hidden">
+    <div className="flex flex-col flex-1 w-full bg-[var(--color-bg)] overflow-x-hidden">
       {/* Scrollable Content Container */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-none">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-36">
         {/* Header */}
         <header className="p-6 pt-6 flex justify-between items-center bg-[var(--color-bg-card)] border-b border-[var(--color-border)] sticky top-0 z-40">
           <div>

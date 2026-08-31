@@ -89,12 +89,12 @@ function ConfirmContent() {
   }, [email, token]);
 
   return (
-    <div className="flex flex-col min-h-screen bg-[var(--color-bg)] justify-center p-6 text-center relative overflow-hidden">
-      {/* Glow Effects */}
-      <div className="absolute -top-20 -right-20 w-60 h-60 bg-[var(--color-primary)]/25 rounded-full blur-3xl pointer-events-none"></div>
-      <div className="absolute -bottom-20 -left-20 w-60 h-60 bg-[var(--color-success)]/15 rounded-full blur-3xl pointer-events-none"></div>
+    <div className="w-full flex-1 min-h-[100dvh] bg-[var(--color-bg)] flex flex-col justify-center p-4 sm:p-6 text-center relative overflow-x-hidden py-8 pb-32">
+      {/* Glow Effects (Contained) */}
+      <div className="absolute top-0 right-0 w-48 h-48 bg-[var(--color-primary)]/15 rounded-full blur-3xl pointer-events-none -mr-8 -mt-8"></div>
+      <div className="absolute bottom-0 left-0 w-48 h-48 bg-[var(--color-secondary)]/10 rounded-full blur-3xl pointer-events-none -ml-8 -mb-8"></div>
 
-      <div className="max-w-md w-full mx-auto space-y-6 relative z-10 py-6">
+      <div className="w-full max-w-md mx-auto space-y-6 relative z-10 py-2">
         
         {isVerifying ? (
           <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-3xl p-8 shadow-2xl space-y-4">

@@ -44,19 +44,37 @@
   --font-mono: var(--font-mono, "JetBrains Mono", monospace);
 }
 
-html, body {
-  max-width: 100vw;
+html {
+  width: 100%;
   overflow-x: hidden;
-  margin: 0;
-  padding: 0;
   background-color: #0b132b;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background-color: #0b132b;
   color: #cbd5e1;
   font-family: var(--font-body, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
   -webkit-font-smoothing: antialiased;
+  margin: 0;
+  padding: 0;
+}
+
+/* Fix iOS Safari and Chrome yellow autofill background */
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus, 
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 50px #0b132b inset !important;
+  -webkit-text-fill-color: #ffffff !important;
+  caret-color: #ffffff !important;
+  transition: background-color 5000s ease-in-out 0s;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -74,13 +92,4 @@ h1, h2, h3, h4, h5, h6 {
 
 .animate-shake {
   animation: shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
-}
-
-/* Ocultar barra de scroll para vista móvil limpia */
-::-webkit-scrollbar {
-  display: none;
-}
-* {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
 }

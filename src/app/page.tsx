@@ -30,9 +30,9 @@ export default function AppHome() {
   const isBono = plan.includes("bono") || (typeof currentStudent?.clases_restantes === "number" && currentStudent.clases_restantes > 0);
 
   return (
-    <div className="flex flex-col h-full w-full bg-[var(--color-bg)] overflow-hidden">
+    <div className="flex flex-col flex-1 w-full bg-[var(--color-bg)] overflow-x-hidden">
       {/* Scrollable Content Container */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-none pb-24">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-36">
         {/* Header Profile */}
         <header className="p-6 pt-6 flex justify-between items-center bg-[var(--color-bg-card)] border-b border-[var(--color-border)]">
           <div>

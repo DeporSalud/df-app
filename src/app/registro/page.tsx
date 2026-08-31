@@ -118,12 +118,12 @@ export default function RegistroPage() {
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-[var(--color-bg)] justify-start p-5 text-left relative overflow-y-auto scrollbar-none">
-      {/* Glow Effects */}
-      <div className="absolute -top-20 -right-20 w-60 h-60 bg-[var(--color-primary)]/20 rounded-full blur-3xl pointer-events-none"></div>
-      <div className="absolute -bottom-20 -left-20 w-60 h-60 bg-[var(--color-secondary)]/15 rounded-full blur-3xl pointer-events-none"></div>
+    <div className="w-full flex-1 bg-[var(--color-bg)] flex flex-col justify-start p-4 sm:p-5 text-left relative overflow-x-hidden pb-36">
+      {/* Glow Effects (Contained) */}
+      <div className="absolute top-0 right-0 w-48 h-48 bg-[var(--color-primary)]/15 rounded-full blur-3xl pointer-events-none -mr-8 -mt-8"></div>
+      <div className="absolute bottom-0 left-0 w-48 h-48 bg-[var(--color-secondary)]/10 rounded-full blur-3xl pointer-events-none -ml-8 -mb-8"></div>
 
-      <div className="max-w-md w-full mx-auto space-y-5 relative z-10 py-3 pb-10">
+      <div className="w-full max-w-md mx-auto space-y-4 relative z-10 py-1">
         
         {/* Top Back Nav */}
         <div className="flex items-center justify-between">

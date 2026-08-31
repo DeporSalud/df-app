@@ -156,12 +156,12 @@ export default function OtpVerificationModal({
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-[var(--color-bg)] justify-center p-4 sm:p-6 text-center relative overflow-hidden font-sans">
-      {/* Background Glows */}
-      <div className="absolute -top-24 -right-24 w-80 h-80 bg-[var(--color-primary)]/20 rounded-full blur-3xl pointer-events-none"></div>
-      <div className="absolute -bottom-24 -left-24 w-80 h-80 bg-[var(--color-secondary)]/15 rounded-full blur-3xl pointer-events-none"></div>
+    <div className="w-full flex-1 min-h-[100dvh] bg-[var(--color-bg)] flex flex-col justify-center p-4 sm:p-6 text-center relative overflow-x-hidden py-8 pb-32 font-sans">
+      {/* Background Glows (Contained) */}
+      <div className="absolute top-0 right-0 w-48 h-48 bg-[var(--color-primary)]/15 rounded-full blur-3xl pointer-events-none -mr-8 -mt-8"></div>
+      <div className="absolute bottom-0 left-0 w-48 h-48 bg-[var(--color-secondary)]/10 rounded-full blur-3xl pointer-events-none -ml-8 -mb-8"></div>
 
-      <div className="max-w-md w-full mx-auto space-y-6 relative z-10 py-4">
+      <div className="w-full max-w-md mx-auto space-y-6 relative z-10 py-2">
         
         {/* Top Back Action if available */}
         {onCancel && (

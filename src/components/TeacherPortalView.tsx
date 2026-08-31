@@ -334,10 +334,10 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   );
 
   return (
-    <div className="flex flex-col h-full w-full bg-[var(--color-bg)] overflow-hidden text-left">
+    <div className="flex flex-col flex-1 w-full bg-[var(--color-bg)] overflow-x-hidden text-left">
       
       {/* Scrollable Container */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-none pb-24">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-36">
         
         {/* Top Header */}
         <header className="p-5 bg-[var(--color-bg-card)] border-b border-[var(--color-border)] sticky top-0 z-40 shadow-lg">
