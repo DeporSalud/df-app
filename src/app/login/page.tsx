@@ -16,10 +16,21 @@ import {
   Delete, 
   Lock, 
   CheckCircle2, 
-  RefreshCw 
+  RefreshCw,
+  Search,
+  ChevronLeft,
+  Sparkles
 } from "lucide-react";
-import { useStudent } from "@/context/StudentContext";
-import { checkLockout, registerFailedAttempt, registerSuccessfulLogin, LockoutStatus } from "@/lib/securityService";
+import { useStudent, PROFESORES_LIST, Teacher } from "@/context/StudentContext";
+import { 
+  checkLockout, 
+  registerFailedAttempt, 
+  registerSuccessfulLogin, 
+  checkTeacherLockout,
+  registerFailedTeacherAttempt,
+  registerSuccessfulTeacherLogin,
+  LockoutStatus 
+} from "@/lib/securityService";
 import OtpVerificationModal from "@/components/OtpVerificationModal";
 
 // Safe haptic feedback helper
@@ -56,15 +67,17 @@ export default function LoginPage() {
   const [studentEmail, setStudentEmail] = useState("");
   const [otpModalEmail, setOtpModalEmail] = useState<string | null>(null);
 
-  // Teacher Keypad State (4-digit PIN iPhone style)
+  // Teacher Selection & Keypad State (Option 1)
+  const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null);
+  const [teacherSearch, setTeacherSearch] = useState("");
   const [teacherPin, setTeacherPin] = useState("");
   const [isPinError, setIsPinError] = useState(false);
 
   const [errorMsg, setErrorMsg] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Security Lockout State
-  const [lockout, setLockout] = useState<LockoutStatus>({
+  // Security Lockout State for the currently selected teacher or general
+  const [teacherLockout, setTeacherLockout] = useState<LockoutStatus>({
     isLocked: false,
     isPermanentLock: false,
     remainingSeconds: 0,
@@ -73,36 +86,38 @@ export default function LoginPage() {
     maxAttempts: 3
   });
 
-  // Refresh lockout status on mount & role change & security updates
-  const syncLockoutStatus = useCallback(() => {
-    const status = checkLockout(selectedRole);
-    setLockout(status);
-    if (!status.isLocked) {
-      setErrorMsg("");
-      setIsPinError(false);
+  // Refresh teacher lockout status
+  const syncTeacherLockout = useCallback(() => {
+    if (selectedTeacher) {
+      const status = checkTeacherLockout(selectedTeacher.id);
+      setTeacherLockout(status);
+      if (!status.isLocked) {
+        setErrorMsg("");
+        setIsPinError(false);
+      }
     }
-  }, [selectedRole]);
+  }, [selectedTeacher]);
 
   useEffect(() => {
-    syncLockoutStatus();
-    window.addEventListener("df_security_lock_updated", syncLockoutStatus);
-    window.addEventListener("storage", syncLockoutStatus);
+    syncTeacherLockout();
+    window.addEventListener("df_security_lock_updated", syncTeacherLockout);
+    window.addEventListener("storage", syncTeacherLockout);
     return () => {
-      window.removeEventListener("df_security_lock_updated", syncLockoutStatus);
-      window.removeEventListener("storage", syncLockoutStatus);
+      window.removeEventListener("df_security_lock_updated", syncTeacherLockout);
+      window.removeEventListener("storage", syncTeacherLockout);
     };
-  }, [syncLockoutStatus]);
+  }, [syncTeacherLockout]);
 
-  // Periodic polling if locked (to detect Reception unlock in real time)
+  // Periodic polling if teacher is locked (to detect Reception unlock in real time)
   useEffect(() => {
-    if (!lockout.isLocked) return;
+    if (!teacherLockout.isLocked || !selectedTeacher) return;
 
     const interval = setInterval(() => {
-      syncLockoutStatus();
+      syncTeacherLockout();
     }, 1500);
 
     return () => clearInterval(interval);
-  }, [lockout.isLocked, syncLockoutStatus]);
+  }, [teacherLockout.isLocked, selectedTeacher, syncTeacherLockout]);
 
   // Handle Student Request OTP
   const handleStudentRequestOtp = async (e: React.FormEvent) => {
@@ -125,29 +140,35 @@ export default function LoginPage() {
     setIsSubmitting(false);
   };
 
-  // Handle Teacher PIN Login
+  // Handle Teacher PIN Login for selected teacher
   const handleTeacherPinLogin = async (pinToVerify: string) => {
-    if (lockout.isLocked || isSubmitting) return;
+    if (!selectedTeacher || teacherLockout.isLocked || isSubmitting) return;
 
     setErrorMsg("");
     setIsPinError(false);
     setIsSubmitting(true);
 
-    const success = await loginAsTeacher(pinToVerify);
+    const isMatch = selectedTeacher.pin === pinToVerify.trim();
 
-    if (success) {
+    if (isMatch) {
       triggerHaptic([20, 20]);
-      registerSuccessfulLogin("profesor", pinToVerify);
+      registerSuccessfulTeacherLogin(selectedTeacher.id);
+      await loginAsTeacher(selectedTeacher.pin);
       router.push("/");
     } else {
       triggerHaptic([40, 30, 40]);
       setIsPinError(true);
-      const secStatus = registerFailedAttempt("profesor", pinToVerify);
-      setLockout(secStatus);
+      const secStatus = registerFailedTeacherAttempt(
+        selectedTeacher.id, 
+        selectedTeacher.name, 
+        selectedTeacher.email, 
+        selectedTeacher.sede
+      );
+      setTeacherLockout(secStatus);
       setIsSubmitting(false);
 
       if (secStatus.isLocked) {
-        setErrorMsg("Acceso docente bloqueado tras 3 intentos fallidos.");
+        setErrorMsg(`Acceso de ${selectedTeacher.name} bloqueado tras 3 intentos fallidos.`);
       } else {
         setErrorMsg(`PIN incorrecto. Te quedan ${secStatus.attemptsLeft} intento(s) antes del bloqueo.`);
         setTimeout(() => {
@@ -160,7 +181,7 @@ export default function LoginPage() {
 
   // Numpad Key Click Handler
   const handleKeypadClick = (digit: string) => {
-    if (lockout.isLocked || isSubmitting) return;
+    if (!selectedTeacher || teacherLockout.isLocked || isSubmitting) return;
     triggerHaptic(15);
     setErrorMsg("");
     setIsPinError(false);
@@ -176,7 +197,7 @@ export default function LoginPage() {
   };
 
   const handleKeypadDelete = () => {
-    if (lockout.isLocked || isSubmitting) return;
+    if (!selectedTeacher || teacherLockout.isLocked || isSubmitting) return;
     triggerHaptic(15);
     setErrorMsg("");
     setIsPinError(false);
@@ -184,7 +205,7 @@ export default function LoginPage() {
   };
 
   const handleKeypadClear = () => {
-    if (lockout.isLocked || isSubmitting) return;
+    if (!selectedTeacher || teacherLockout.isLocked || isSubmitting) return;
     triggerHaptic(15);
     setErrorMsg("");
     setIsPinError(false);
@@ -193,7 +214,7 @@ export default function LoginPage() {
 
   // Physical Keyboard Support for PIN on Desktop
   useEffect(() => {
-    if (selectedRole !== "profesor" || lockout.isLocked || isSubmitting) return;
+    if (selectedRole !== "profesor" || !selectedTeacher || teacherLockout.isLocked || isSubmitting) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const activeTag = (document.activeElement?.tagName || "").toUpperCase();
@@ -213,13 +234,12 @@ export default function LoginPage() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedRole, lockout.isLocked, isSubmitting, teacherPin]);
+  }, [selectedRole, selectedTeacher, teacherLockout.isLocked, isSubmitting, teacherPin]);
 
-  const formatCountdown = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  const filteredTeachers = PROFESORES_LIST.filter(t => 
+    t.name.toLowerCase().includes(teacherSearch.toLowerCase()) || 
+    t.especialidad.toLowerCase().includes(teacherSearch.toLowerCase())
+  );
 
   if (otpModalEmail) {
     return (
@@ -384,136 +404,260 @@ export default function LoginPage() {
           )}
 
           {/* ======================================================== */}
-          {/* TAB PROFESOR (100% PIN KEYPAD IPHONE STYLE) */}
+          {/* TAB PROFESOR (OPCIÓN 1: SELECTOR VISUAL + TECLADO PIN)  */}
           {/* ======================================================== */}
           {selectedRole === "profesor" && (
-            <div className="space-y-4 animate-in fade-in duration-200 text-center">
+            <div className="space-y-4 animate-in fade-in duration-200">
               
-              {/* LOCKOUT SCREEN FOR TEACHERS */}
-              {lockout.isLocked ? (
-                <div className="p-5 sm:p-6 rounded-2xl bg-red-950/70 border-2 border-red-500/60 text-center space-y-4 shadow-2xl animate-in zoom-in-95">
-                  <div className="w-16 h-16 rounded-full bg-red-500/20 text-red-400 border-2 border-red-500/40 flex items-center justify-center mx-auto shadow-lg shadow-red-500/20">
-                    <ShieldAlert size={32} className="animate-pulse" />
-                  </div>
-                  
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-mono font-bold text-red-400 uppercase tracking-widest bg-red-500/20 px-3 py-1 rounded-full border border-red-500/30">
-                      Bloqueo por Seguridad Activo
-                    </span>
-                    <h3 className="text-lg font-extrabold text-white pt-1">
-                      Acceso Docente Bloqueado
-                    </h3>
-                  </div>
-
-                  <p className="text-xs text-slate-300 leading-relaxed max-w-xs mx-auto">
-                    Se han registrado <strong>3 intentos fallidos de PIN</strong>. Para proteger el pase de lista y los datos de la escuela, el acceso ha sido bloqueado.
-                  </p>
-
-                  <div className="p-3.5 rounded-xl bg-black/50 border border-red-500/30 text-xs text-amber-300 flex items-center justify-center gap-2 font-semibold">
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
-                    <span>Esperando desbloqueo desde Recepción...</span>
-                  </div>
-
-                  <p className="text-[11px] text-slate-400 leading-normal">
-                    Solicita en Recepción (Studio 1 o Studio 2) que pulsen <strong>Desbloquear Acceso Docente</strong> en el panel de control.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {/* Header Subtitle */}
-                  <div className="space-y-1">
+              {/* PASO 1: SELECCIÓN DEL PROFESOR */}
+              {!selectedTeacher ? (
+                <div className="space-y-3">
+                  <div className="text-center space-y-1">
                     <p className="text-xs font-bold text-white flex items-center justify-center gap-1.5">
-                      <KeyRound size={15} className="text-[var(--color-secondary)]" />
-                      <span>Introduce tu Código PIN Docente</span>
+                      <GraduationCap size={16} className="text-[var(--color-secondary)]" />
+                      <span>Claustro Docente Dance Factory</span>
                     </p>
                     <p className="text-[11px] text-slate-400">
-                      Marca tus 4 dígitos para acceder al pase de lista y clases
+                      Selecciona tu perfil de profesor para identificarte
                     </p>
                   </div>
 
-                  {/* Error Alert */}
-                  {errorMsg && (
-                    <div className="p-2.5 rounded-xl bg-[var(--color-danger)]/15 border border-[var(--color-danger)]/30 text-[var(--color-danger)] text-xs font-semibold animate-in fade-in">
-                      <p>{errorMsg}</p>
-                    </div>
-                  )}
-
-                  {/* 4-DOT PIN INDICATOR (IPHONE STYLE) */}
-                  <div className={`flex items-center justify-center gap-4 py-2 ${isPinError ? "animate-shake" : ""}`}>
-                    {[0, 1, 2, 3].map((idx) => {
-                      const isFilled = teacherPin.length > idx;
-                      return (
-                        <div
-                          key={idx}
-                          className={`w-4 h-4 rounded-full transition-all duration-200 ${
-                            isPinError
-                              ? "bg-red-500 border-2 border-red-400 shadow-[0_0_12px_rgba(239,68,68,0.7)]"
-                              : isFilled
-                              ? "bg-[var(--color-secondary)] border-2 border-[var(--color-secondary)] shadow-[0_0_14px_rgba(251,191,36,0.8)] scale-110"
-                              : "bg-transparent border-2 border-slate-600"
-                          }`}
-                        />
-                      );
-                    })}
+                  {/* Search Filter */}
+                  <div className="relative flex items-center">
+                    <Search className="absolute left-3 w-3.5 h-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      value={teacherSearch}
+                      onChange={(e) => setTeacherSearch(e.target.value)}
+                      placeholder="Buscar profesor o especialidad..."
+                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-white text-xs focus:outline-none focus:border-[var(--color-secondary)] transition-colors placeholder:text-slate-500"
+                    />
                   </div>
 
-                  {/* IPHONE CIRCULAR NUMERIC KEYPAD */}
-                  <div className="grid grid-cols-3 gap-3 max-w-[250px] mx-auto pt-1">
-                    {KEYPAD_BUTTONS.map((item) => {
-                      if (item.digit === "clear") {
-                        return (
-                          <button
-                            key="clear"
-                            type="button"
-                            disabled={isSubmitting || teacherPin.length === 0}
-                            onClick={handleKeypadClear}
-                            className="w-16 h-16 rounded-full flex items-center justify-center text-xs font-bold text-slate-400 hover:text-white transition-all active:scale-95 disabled:opacity-20 disabled:cursor-not-allowed mx-auto cursor-pointer"
-                          >
-                            Borrar
-                          </button>
-                        );
-                      }
-                      if (item.digit === "backspace") {
-                        return (
-                          <button
-                            key="backspace"
-                            type="button"
-                            disabled={isSubmitting || teacherPin.length === 0}
-                            onClick={handleKeypadDelete}
-                            className="w-16 h-16 rounded-full flex items-center justify-center text-slate-400 hover:text-white transition-all active:scale-95 disabled:opacity-20 disabled:cursor-not-allowed mx-auto cursor-pointer"
-                          >
-                            <Delete size={20} />
-                          </button>
-                        );
-                      }
+                  {/* Grid de Profesores */}
+                  <div className="space-y-1.5 max-h-[300px] overflow-y-auto pr-1">
+                    {filteredTeachers.map((teacher) => {
+                      const lockStatus = checkTeacherLockout(teacher.id);
+
                       return (
                         <button
-                          key={item.digit}
+                          key={teacher.id}
                           type="button"
-                          disabled={isSubmitting}
-                          onClick={() => handleKeypadClick(item.digit)}
-                          className="w-16 h-16 rounded-full bg-white/[0.06] hover:bg-white/[0.12] active:bg-[var(--color-secondary)]/30 active:scale-90 border border-white/10 text-white transition-all flex flex-col items-center justify-center mx-auto cursor-pointer shadow-md select-none group disabled:opacity-40 disabled:cursor-not-allowed"
+                          onClick={() => {
+                            setSelectedTeacher(teacher);
+                            setTeacherPin("");
+                            setIsPinError(false);
+                            setErrorMsg("");
+                            const status = checkTeacherLockout(teacher.id);
+                            setTeacherLockout(status);
+                          }}
+                          className={`w-full p-2.5 rounded-xl border flex items-center justify-between text-left transition-all active:scale-[0.98] cursor-pointer group ${
+                            lockStatus.isLocked
+                              ? "bg-red-950/30 border-red-500/40 hover:border-red-400"
+                              : "bg-[var(--color-bg)] border-[var(--color-border)] hover:border-[var(--color-secondary)]/60 hover:bg-white/[0.04]"
+                          }`}
                         >
-                          <span className="text-xl font-bold font-mono group-hover:text-[var(--color-secondary)] transition-colors leading-none">
-                            {item.digit}
-                          </span>
-                          {item.sub && (
-                            <span className="text-[8px] tracking-widest text-slate-400 font-semibold mt-0.5">
-                              {item.sub}
+                          <div className="flex items-center gap-2.5">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 border ${
+                              lockStatus.isLocked
+                                ? "bg-red-500/20 text-red-400 border-red-500/40"
+                                : "bg-[var(--color-secondary)]/15 text-[var(--color-secondary)] border-[var(--color-secondary)]/30 group-hover:bg-[var(--color-secondary)] group-hover:text-slate-950 transition-colors"
+                            }`}>
+                              {teacher.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-bold text-white group-hover:text-[var(--color-secondary)] transition-colors">
+                                {teacher.name}
+                              </h4>
+                              <p className="text-[10px] text-slate-400">
+                                {teacher.especialidad} • {teacher.sede === "tejar" ? "Studio 1 El Tejar" : teacher.sede === "castilla" ? "Studio 2 Castilla" : "Consolidado"}
+                              </p>
+                            </div>
+                          </div>
+
+                          {lockStatus.isLocked ? (
+                            <span className="text-[10px] font-mono font-bold text-red-400 bg-red-500/15 px-2 py-0.5 rounded border border-red-500/30 flex items-center gap-1">
+                              <Lock size={10} /> Bloqueado
                             </span>
+                          ) : (
+                            <ArrowRight size={14} className="text-slate-500 group-hover:text-[var(--color-secondary)] group-hover:translate-x-0.5 transition-all" />
                           )}
                         </button>
                       );
                     })}
                   </div>
+                </div>
+              ) : (
+                /* PASO 2: TECLADO PIN IPHONE PARA EL PROFESOR SELECCIONADO */
+                <div className="space-y-4 animate-in fade-in duration-200 text-center">
+                  
+                  {/* Selected Teacher Header Badge */}
+                  <div className="flex items-center justify-between p-2 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-left">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-[var(--color-secondary)] text-slate-950 flex items-center justify-center text-xs font-bold shrink-0">
+                        {selectedTeacher.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-mono text-slate-400 block uppercase">Docente Seleccionado</span>
+                        <h4 className="text-xs font-bold text-white">{selectedTeacher.name}</h4>
+                      </div>
+                    </div>
 
-                  {/* Attempts Remaining Badge */}
-                  <div className="pt-2">
-                    <span className="text-[10px] font-mono text-slate-400 bg-white/5 px-3 py-1 rounded-full border border-white/10">
-                      {lockout.attemptsLeft === 3 ? "3 intentos permitidos" : `⚠️ ${lockout.attemptsLeft} intentos restantes antes del bloqueo`}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedTeacher(null);
+                        setTeacherPin("");
+                        setErrorMsg("");
+                        setIsPinError(false);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1"
+                    >
+                      <ChevronLeft size={12} />
+                      <span>Cambiar</span>
+                    </button>
                   </div>
-                </>
+
+                  {/* BLOQUEO POR SEGURIDAD SI ESTE PROFESOR HA FALLADO 3 VECES */}
+                  {teacherLockout.isLocked ? (
+                    <div className="p-5 sm:p-6 rounded-2xl bg-red-950/70 border-2 border-red-500/60 text-center space-y-4 shadow-2xl animate-in zoom-in-95">
+                      <div className="w-16 h-16 rounded-full bg-red-500/20 text-red-400 border-2 border-red-500/40 flex items-center justify-center mx-auto shadow-lg shadow-red-500/20">
+                        <ShieldAlert size={32} className="animate-pulse" />
+                      </div>
+                      
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-mono font-bold text-red-400 uppercase tracking-widest bg-red-500/20 px-3 py-1 rounded-full border border-red-500/30">
+                          Bloqueo de Seguridad Activo
+                        </span>
+                        <h3 className="text-lg font-extrabold text-white pt-1">
+                          Acceso Bloqueado: {selectedTeacher.name}
+                        </h3>
+                      </div>
+
+                      <p className="text-xs text-slate-300 leading-relaxed max-w-xs mx-auto">
+                        Se han registrado <strong>3 intentos fallidos de PIN</strong> para {selectedTeacher.name}. Por protocolo de seguridad, este acceso requiere desbloqueo presencial en Recepción.
+                      </p>
+
+                      <div className="p-3.5 rounded-xl bg-black/50 border border-red-500/30 text-xs text-amber-300 flex items-center justify-center gap-2 font-semibold">
+                        <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
+                        <span>Esperando desbloqueo desde Recepción...</span>
+                      </div>
+
+                      <p className="text-[11px] text-slate-400 leading-normal">
+                        Solicita en Recepción (Studio 1 o Studio 2) que pulsen <strong>Desbloquear a {selectedTeacher.name}</strong> en el panel de control.
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTeacher(null);
+                          setTeacherPin("");
+                        }}
+                        className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1.5"
+                      >
+                        <ChevronLeft size={14} />
+                        <span>Seleccionar otro profesor</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Subtitle */}
+                      <div className="space-y-0.5">
+                        <p className="text-xs font-bold text-white flex items-center justify-center gap-1.5">
+                          <KeyRound size={14} className="text-[var(--color-secondary)]" />
+                          <span>Introduce tus 4 dígitos de PIN</span>
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                          PIN personal de {selectedTeacher.name}
+                        </p>
+                      </div>
+
+                      {/* Error Alert */}
+                      {errorMsg && (
+                        <div className="p-2.5 rounded-xl bg-[var(--color-danger)]/15 border border-[var(--color-danger)]/30 text-[var(--color-danger)] text-xs font-semibold animate-in fade-in">
+                          <p>{errorMsg}</p>
+                        </div>
+                      )}
+
+                      {/* 4-DOT PIN INDICATOR (IPHONE STYLE) */}
+                      <div className={`flex items-center justify-center gap-4 py-1.5 ${isPinError ? "animate-shake" : ""}`}>
+                        {[0, 1, 2, 3].map((idx) => {
+                          const isFilled = teacherPin.length > idx;
+                          return (
+                            <div
+                              key={idx}
+                              className={`w-4 h-4 rounded-full transition-all duration-200 ${
+                                isPinError
+                                  ? "bg-red-500 border-2 border-red-400 shadow-[0_0_12px_rgba(239,68,68,0.7)]"
+                                  : isFilled
+                                  ? "bg-[var(--color-secondary)] border-2 border-[var(--color-secondary)] shadow-[0_0_14px_rgba(251,191,36,0.8)] scale-110"
+                                  : "bg-transparent border-2 border-slate-600"
+                              }`}
+                            />
+                          );
+                        })}
+                      </div>
+
+                      {/* IPHONE CIRCULAR NUMERIC KEYPAD */}
+                      <div className="grid grid-cols-3 gap-3 max-w-[250px] mx-auto pt-1">
+                        {KEYPAD_BUTTONS.map((item) => {
+                          if (item.digit === "clear") {
+                            return (
+                              <button
+                                key="clear"
+                                type="button"
+                                disabled={isSubmitting || teacherPin.length === 0}
+                                onClick={handleKeypadClear}
+                                className="w-16 h-16 rounded-full flex items-center justify-center text-xs font-bold text-slate-400 hover:text-white transition-all active:scale-95 disabled:opacity-20 disabled:cursor-not-allowed mx-auto cursor-pointer"
+                              >
+                                Borrar
+                              </button>
+                            );
+                          }
+                          if (item.digit === "backspace") {
+                            return (
+                              <button
+                                key="backspace"
+                                type="button"
+                                disabled={isSubmitting || teacherPin.length === 0}
+                                onClick={handleKeypadDelete}
+                                className="w-16 h-16 rounded-full flex items-center justify-center text-slate-400 hover:text-white transition-all active:scale-95 disabled:opacity-20 disabled:cursor-not-allowed mx-auto cursor-pointer"
+                              >
+                                <Delete size={20} />
+                              </button>
+                            );
+                          }
+                          return (
+                            <button
+                              key={item.digit}
+                              type="button"
+                              disabled={isSubmitting}
+                              onClick={() => handleKeypadClick(item.digit)}
+                              className="w-16 h-16 rounded-full bg-white/[0.06] hover:bg-white/[0.12] active:bg-[var(--color-secondary)]/30 active:scale-90 border border-white/10 text-white transition-all flex flex-col items-center justify-center mx-auto cursor-pointer shadow-md select-none group disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <span className="text-xl font-bold font-mono group-hover:text-[var(--color-secondary)] transition-colors leading-none">
+                                {item.digit}
+                              </span>
+                              {item.sub && (
+                                <span className="text-[8px] tracking-widest text-slate-400 font-semibold mt-0.5">
+                                  {item.sub}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Attempts Remaining Badge */}
+                      <div className="pt-1.5">
+                        <span className="text-[10px] font-mono text-slate-400 bg-white/5 px-3 py-1 rounded-full border border-white/10">
+                          {teacherLockout.attemptsLeft === 3 ? "3 intentos permitidos" : `⚠️ ${teacherLockout.attemptsLeft} intento(s) restante(s) antes del bloqueo`}
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                </div>
               )}
 
             </div>

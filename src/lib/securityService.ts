@@ -165,10 +165,150 @@ export function registerFailedAttempt(role: "alumno" | "profesor", identifier?: 
   return checkLockout(role);
 }
 
+export function checkTeacherLockout(teacherId: string): LockoutStatus {
+  if (typeof window === "undefined") {
+    return { isLocked: false, isPermanentLock: false, remainingSeconds: 0, attemptsLeft: MAX_ATTEMPTS, failedCount: 0, maxAttempts: MAX_ATTEMPTS };
+  }
+
+  try {
+    const raw = localStorage.getItem(`${STORAGE_KEY_PREFIX}teacher_${teacherId}`);
+    if (!raw) {
+      return { isLocked: false, isPermanentLock: false, remainingSeconds: 0, attemptsLeft: MAX_ATTEMPTS, failedCount: 0, maxAttempts: MAX_ATTEMPTS };
+    }
+
+    const state: SecurityState = JSON.parse(raw);
+    if (state.failedCount >= MAX_ATTEMPTS) {
+      return {
+        isLocked: true,
+        isPermanentLock: true,
+        remainingSeconds: 0,
+        attemptsLeft: 0,
+        failedCount: state.failedCount,
+        maxAttempts: MAX_ATTEMPTS
+      };
+    }
+
+    return {
+      isLocked: false,
+      isPermanentLock: false,
+      remainingSeconds: 0,
+      attemptsLeft: Math.max(0, MAX_ATTEMPTS - state.failedCount),
+      failedCount: state.failedCount,
+      maxAttempts: MAX_ATTEMPTS
+    };
+  } catch {
+    return { isLocked: false, isPermanentLock: false, remainingSeconds: 0, attemptsLeft: MAX_ATTEMPTS, failedCount: 0, maxAttempts: MAX_ATTEMPTS };
+  }
+}
+
+export function registerFailedTeacherAttempt(teacherId: string, teacherName: string, teacherEmail?: string, teacherSede?: string): LockoutStatus {
+  if (typeof window === "undefined") {
+    return { isLocked: false, isPermanentLock: false, remainingSeconds: 0, attemptsLeft: 2, failedCount: 1, maxAttempts: MAX_ATTEMPTS };
+  }
+
+  const current = checkTeacherLockout(teacherId);
+  const newCount = current.failedCount + 1;
+  const isPermanentLock = newCount >= MAX_ATTEMPTS;
+
+  const state: SecurityState = {
+    failedCount: newCount,
+    lockedUntil: isPermanentLock ? Infinity : 0,
+    lockoutStreak: isPermanentLock ? 1 : 0,
+    isPermanentLock
+  };
+
+  try {
+    localStorage.setItem(`${STORAGE_KEY_PREFIX}teacher_${teacherId}`, JSON.stringify(state));
+    window.dispatchEvent(new Event("df_security_lock_updated"));
+  } catch (e) {
+    console.error("Error saving teacher security state:", e);
+  }
+
+  if (isPermanentLock) {
+    // Sync block to Supabase alumnos so Reception CRM can see it and unlock
+    try {
+      supabase
+        .from("alumnos")
+        .upsert({
+          id: `docente_${teacherId}`,
+          nombre_completo: teacherName,
+          email: teacherEmail || `${teacherId}@dancefactory.es`,
+          plan_activo: "Docente Dance Factory",
+          sede: teacherSede || "castilla",
+          estado: "Bloqueado por 3 fallos de PIN"
+        })
+        .then(({ error }) => {
+          if (error) console.warn("[Security] Error upserting teacher lock to Supabase:", error);
+        });
+    } catch (err) {
+      console.warn("[Security] Error syncing teacher lock to Supabase:", err);
+    }
+
+    logActivity({
+      origen: "seguridad",
+      tipo_evento: "seguridad_bloqueo",
+      descripcion: `🚨 BLOQUEO DE SEGURIDAD DOCENTE: Se ha bloqueado el acceso de ${teacherName} tras ${newCount} intentos fallidos de PIN. Requiere desbloqueo en Recepción.`,
+      usuario_afectado: teacherName,
+      sede: teacherSede || "General"
+    });
+  } else {
+    logActivity({
+      origen: "seguridad",
+      tipo_evento: "seguridad_intento_fallido",
+      descripcion: `⚠️ Intento fallido de PIN (${newCount}/${MAX_ATTEMPTS}) para el docente ${teacherName}.`,
+      usuario_afectado: teacherName,
+      sede: teacherSede || "General"
+    });
+  }
+
+  return checkTeacherLockout(teacherId);
+}
+
+export function registerSuccessfulTeacherLogin(teacherId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(`${STORAGE_KEY_PREFIX}teacher_${teacherId}`);
+    window.dispatchEvent(new Event("df_security_lock_updated"));
+  } catch {}
+}
+
+export function unlockTeacher(teacherId: string, teacherName?: string) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(`${STORAGE_KEY_PREFIX}teacher_${teacherId}`);
+    window.dispatchEvent(new Event("df_security_lock_updated"));
+
+    // Sync unlock in Supabase
+    try {
+      supabase
+        .from("alumnos")
+        .update({ estado: "Activo" })
+        .eq("id", `docente_${teacherId}`);
+    } catch {}
+
+    logActivity({
+      origen: "recepcion",
+      tipo_evento: "seguridad_desbloqueo",
+      descripcion: `🔓 DESBLOQUEO DOCENTE: Recepción ha restablecido con éxito el acceso de ${teacherName || `Profesor (${teacherId})`}.`,
+      usuario_afectado: teacherName || `Docente ${teacherId}`,
+      sede: "General"
+    });
+  } catch (e) {
+    console.error("Error unlocking teacher:", e);
+  }
+}
+
 export function unlockRole(role: "alumno" | "profesor") {
   if (typeof window === "undefined") return;
   try {
     localStorage.removeItem(STORAGE_KEY_PREFIX + role);
+    // Also remove any teacher locks
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(`${STORAGE_KEY_PREFIX}teacher_`)) {
+        localStorage.removeItem(key);
+      }
+    }
     window.dispatchEvent(new Event("df_security_lock_updated"));
     
     logActivity({
