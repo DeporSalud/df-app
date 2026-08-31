@@ -29,6 +29,8 @@ import {
   checkTeacherLockout,
   registerFailedTeacherAttempt,
   registerSuccessfulTeacherLogin,
+  unlockTeacher,
+  unlockRole,
   LockoutStatus 
 } from "@/lib/securityService";
 import OtpVerificationModal from "@/components/OtpVerificationModal";
@@ -63,6 +65,14 @@ export default function LoginPage() {
   
   const [selectedRole, setSelectedRole] = useState<"alumno" | "profesor">("alumno");
 
+  // Auto-clean any legacy generic lock on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("df_sec_lockout_profesor");
+      window.dispatchEvent(new Event("df_security_lock_updated"));
+    }
+  }, []);
+
   // Student Form (100% Passwordless OTP)
   const [studentEmail, setStudentEmail] = useState("");
   const [otpModalEmail, setOtpModalEmail] = useState<string | null>(null);
@@ -95,6 +105,15 @@ export default function LoginPage() {
         setErrorMsg("");
         setIsPinError(false);
       }
+    } else {
+      setTeacherLockout({
+        isLocked: false,
+        isPermanentLock: false,
+        remainingSeconds: 0,
+        attemptsLeft: 3,
+        failedCount: 0,
+        maxAttempts: 3
+      });
     }
   }, [selectedTeacher]);
 
