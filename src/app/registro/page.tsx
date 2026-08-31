@@ -240,16 +240,6 @@ export default function RegistroPage() {
               </div>
             </div>
 
-            {/* Aviso de Acceso Seguro sin Contraseña */}
-            <div className="p-3 rounded-xl bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 text-[11px] text-slate-300 space-y-1">
-              <p className="font-semibold text-white flex items-center gap-1.5">
-                <Sparkles size={14} className="text-[var(--color-secondary)]" />
-                <span>Acceso Seguro sin Contraseña</span>
-              </p>
-              <p className="text-[10.5px] text-slate-400 leading-normal">
-                No necesitas recordar contraseñas. Te enviaremos un código One Time PIN (OTP) a tu correo para activar y acceder a tu carnet digital.
-              </p>
-            </div>
 
             {/* Términos y LOPD */}
             <div className="pt-1">
