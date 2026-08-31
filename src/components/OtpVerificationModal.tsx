@@ -24,6 +24,7 @@ interface OtpVerificationModalProps {
   email: string;
   onSuccess: () => void;
   onCancel?: () => void;
+  onVerifyCode?: (code: string) => Promise<{ success: boolean; error?: string }>;
   title?: string;
   subtitle?: string;
 }
@@ -32,6 +33,7 @@ export default function OtpVerificationModal({
   email,
   onSuccess,
   onCancel,
+  onVerifyCode,
   title = "Verificación por Correo",
   subtitle = "Hemos enviado un código One Time PIN (OTP) de 6 dígitos a tu correo:"
 }: OtpVerificationModalProps) {
@@ -122,13 +124,22 @@ export default function OtpVerificationModal({
 
     await new Promise(r => setTimeout(r, 400)); // Smooth UI feel
 
-    const result = verifyOtpCode(email, codeToVerify);
+    let result: { success: boolean; error?: string } = verifyOtpCode(email, codeToVerify);
+
+    if (onVerifyCode) {
+      const customRes = await onVerifyCode(codeToVerify);
+      if (!customRes.success) {
+        result = { success: false, error: customRes.error || "Error al verificar el código." };
+      } else {
+        result = { success: true };
+      }
+    }
 
     if (result.success) {
       setIsSuccess(true);
       setTimeout(() => {
         onSuccess();
-      }, 1000);
+      }, 700);
     } else {
       setErrorMsg(result.error || "Código incorrecto. Revisa e inténtalo de nuevo.");
       setIsVerifying(false);

@@ -10,7 +10,7 @@ import OtpVerificationModal from "@/components/OtpVerificationModal";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { loginWithCredentials, loginAsTeacher, requestStudentOtp } = useStudent();
+  const { loginWithCredentials, loginAsTeacher, requestStudentOtp, verifyStudentWithOtp } = useStudent();
   
   const [selectedRole, setSelectedRole] = useState<"alumno" | "profesor">("alumno");
 
@@ -58,65 +58,84 @@ export default function LoginPage() {
     return () => clearInterval(interval);
   }, [lockout.isLocked, selectedRole]);
 
-  const handleStudentSubmit = async (e: React.FormEvent) => {
+  // Handle Student Password Login
+  const handleStudentPasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (lockout.isLocked) return;
-
     setErrorMsg("");
-    setIsSubmitting(true);
 
-    const email = studentEmail.trim().toLowerCase();
-
-    if (studentAuthMode === "otp") {
-      if (!email) {
-        setErrorMsg("Por favor, introduce tu correo electrónico.");
-        setIsSubmitting(false);
-        return;
-      }
-      const res = await requestStudentOtp(email);
-      if (res.success) {
-        setOtpModalEmail(email);
-      } else {
-        setErrorMsg(res.error || "No se pudo enviar el código OTP. Inténtalo de nuevo.");
-      }
-      setIsSubmitting(false);
+    if (lockout.isLocked) {
+      setErrorMsg(`Acceso temporalmente bloqueado. Inténtalo de nuevo en ${formatCountdown(lockout.remainingSeconds)}.`);
       return;
     }
 
-    const pass = studentPassword.trim();
-    const success = await loginWithCredentials(email, pass);
+    if (!studentEmail.trim() || !studentPassword.trim()) {
+      setErrorMsg("Por favor, introduce tu correo y contraseña.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    const success = await loginWithCredentials(studentEmail, studentPassword);
 
     if (success) {
-      registerSuccessfulLogin("alumno", email);
+      registerSuccessfulLogin("alumno", studentEmail);
       router.push("/");
     } else {
-      const secStatus = registerFailedAttempt("alumno", email);
+      const secStatus = registerFailedAttempt("alumno", studentEmail);
       setLockout(secStatus);
       setIsSubmitting(false);
 
       if (secStatus.isLocked) {
-        setErrorMsg(`Has superado el límite de ${secStatus.maxAttempts} intentos fallidos. Por seguridad de Dance Factory, tu acceso ha sido bloqueado temporalmente.`);
+        setErrorMsg(`Has superado el límite de ${secStatus.maxAttempts} intentos fallidos. El acceso ha sido bloqueado temporalmente.`);
       } else {
-        setErrorMsg(`Credenciales de alumno incorrectas. Te quedan ${secStatus.attemptsLeft} intento(s) antes del bloqueo de seguridad.`);
+        setErrorMsg(`Credenciales incorrectas. Te quedan ${secStatus.attemptsLeft} intento(s) antes del bloqueo.`);
       }
     }
   };
 
-  const handleTeacherSubmit = async (e: React.FormEvent) => {
+  // Handle Student Request OTP
+  const handleStudentRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (lockout.isLocked) return;
-
     setErrorMsg("");
-    setIsSubmitting(true);
 
-    const credential = teacherAuthMode === "pin" ? teacherPin.trim() : teacherEmail.trim();
-    const success = await loginAsTeacher(credential);
+    if (!studentEmail.trim()) {
+      setErrorMsg("Por favor, introduce tu correo electrónico.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    const res = await requestStudentOtp(studentEmail.trim().toLowerCase());
+
+    if (res.success) {
+      setOtpModalEmail(studentEmail.trim().toLowerCase());
+    } else {
+      setErrorMsg(res.error || "No se pudo solicitar el código OTP.");
+    }
+    setIsSubmitting(false);
+  };
+
+  // Handle Teacher PIN Login
+  const handleTeacherPinLogin = async (pinToUse?: string) => {
+    const pin = pinToUse || teacherPin;
+    setErrorMsg("");
+
+    if (lockout.isLocked) {
+      setErrorMsg(`Acceso de profesor bloqueado temporalmente. Inténtalo en ${formatCountdown(lockout.remainingSeconds)}.`);
+      return;
+    }
+
+    if (!pin || pin.length < 4) {
+      setErrorMsg("Por favor, introduce tu PIN de 4 dígitos.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    const success = await loginAsTeacher(pin);
 
     if (success) {
-      registerSuccessfulLogin("profesor", credential);
+      registerSuccessfulLogin("profesor", pin);
       router.push("/");
     } else {
-      const secStatus = registerFailedAttempt("profesor", credential);
+      const secStatus = registerFailedAttempt("profesor", pin);
       setLockout(secStatus);
       setIsSubmitting(false);
 
@@ -125,6 +144,23 @@ export default function LoginPage() {
       } else {
         setErrorMsg(`PIN o credencial de profesor incorrecta. Te quedan ${secStatus.attemptsLeft} intento(s) antes del bloqueo de seguridad.`);
       }
+    }
+  };
+
+  const handleStudentSubmit = (e: React.FormEvent) => {
+    if (studentAuthMode === "otp") {
+      handleStudentRequestOtp(e);
+    } else {
+      handleStudentPasswordLogin(e);
+    }
+  };
+
+  const handleTeacherSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (teacherAuthMode === "pin") {
+      handleTeacherPinLogin();
+    } else {
+      handleTeacherPinLogin(teacherEmail);
     }
   };
 
@@ -140,6 +176,9 @@ export default function LoginPage() {
         email={otpModalEmail}
         title="Acceso por One Time PIN"
         subtitle="Introduce el código de 6 dígitos enviado a tu correo electrónico:"
+        onVerifyCode={async (code) => {
+          return await verifyStudentWithOtp(otpModalEmail, code);
+        }}
         onSuccess={() => {
           registerSuccessfulLogin("alumno", otpModalEmail);
           router.push("/");

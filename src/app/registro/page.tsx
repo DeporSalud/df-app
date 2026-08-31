@@ -23,7 +23,7 @@ import OtpVerificationModal from "@/components/OtpVerificationModal";
 
 export default function RegistroPage() {
   const router = useRouter();
-  const { registerStudent } = useStudent();
+  const { registerStudent, verifyStudentWithOtp } = useStudent();
 
   const [formData, setFormData] = useState({
     nombre_completo: "",
@@ -56,25 +56,9 @@ export default function RegistroPage() {
       return;
     }
 
-    if (!formData.nombre_completo.trim() || !formData.email.trim() || !formData.telefono.trim()) {
-      setErrorMsg("Por favor, completa los campos obligatorios (Nombre, Email y Teléfono).");
+    if (!formData.nombre_completo || !formData.email || !formData.telefono || !formData.password) {
+      setErrorMsg("Por favor, completa todos los campos obligatorios (*).");
       return;
-    }
-
-    const cleanPhone = formData.telefono.replace(/[\s\-\.]/g, "");
-    const phoneRegex = /^(\+34|0034)?[6789]\d{8}$/;
-    if (!phoneRegex.test(cleanPhone)) {
-      setErrorMsg("El número de teléfono debe ser un teléfono móvil español válido (ej. 600123456 o +34 600123456).");
-      return;
-    }
-
-    if (formData.dni.trim()) {
-      const cleanDni = formData.dni.trim().toUpperCase();
-      const dniNieRegex = /^(\d{8}[A-Z]|[XYZ]\d{7}[A-Z])$/;
-      if (!dniNieRegex.test(cleanDni)) {
-        setErrorMsg("El DNI o NIE introducido no tiene un formato válido (ej. 12345678X o Y1234567Z).");
-        return;
-      }
     }
 
     setIsSubmitting(true);
@@ -82,10 +66,9 @@ export default function RegistroPage() {
     const res = await registerStudent({
       nombre_completo: formData.nombre_completo.trim(),
       email: formData.email.trim().toLowerCase(),
-      telefono: cleanPhone,
-      dni: formData.dni.trim() ? formData.dni.trim().toUpperCase() : undefined,
-      fecha_nacimiento: formData.fecha_nacimiento,
-      password: formData.password,
+      telefono: formData.telefono.trim(),
+      dni: formData.dni.trim().toUpperCase(),
+      fecha_nacimiento: formData.fecha_nacimiento || undefined,
       sede: "tejar",
       plan_activo: "Sin Plan Activo"
     });
@@ -106,11 +89,14 @@ export default function RegistroPage() {
         email={registeredEmail}
         title="Verifica tu Cuenta"
         subtitle="Introduce el código One Time PIN (OTP) de 6 dígitos enviado a tu correo:"
+        onVerifyCode={async (code) => {
+          return await verifyStudentWithOtp(registeredEmail, code);
+        }}
         onSuccess={() => {
           router.push("/");
         }}
         onCancel={() => {
-          setRegisteredEmail("");
+          setRegisteredEmail(null);
           setIsSubmitting(false);
         }}
       />
