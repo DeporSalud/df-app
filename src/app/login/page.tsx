@@ -27,6 +27,7 @@ import {
   registerFailedAttempt, 
   registerSuccessfulLogin, 
   checkTeacherLockout,
+  syncTeacherLockoutWithSupabase,
   registerFailedTeacherAttempt,
   registerSuccessfulTeacherLogin,
   unlockTeacher,
@@ -97,9 +98,9 @@ export default function LoginPage() {
   });
 
   // Refresh teacher lockout status
-  const syncTeacherLockout = useCallback(() => {
+  const syncTeacherLockout = useCallback(async () => {
     if (selectedTeacher) {
-      const status = checkTeacherLockout(selectedTeacher.id);
+      const status = await syncTeacherLockoutWithSupabase(selectedTeacher.id);
       setTeacherLockout(status);
       if (!status.isLocked) {
         setErrorMsg("");

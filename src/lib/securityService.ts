@@ -165,6 +165,11 @@ export function registerFailedAttempt(role: "alumno" | "profesor", identifier?: 
   return checkLockout(role);
 }
 
+export function getTeacherUuid(id: string): string {
+  const num = parseInt(id.replace(/\D/g, "") || "1000", 10);
+  return `00000000-0000-0000-0000-${num.toString().padStart(12, "0")}`;
+}
+
 export function checkTeacherLockout(teacherId: string): LockoutStatus {
   if (typeof window === "undefined") {
     return { isLocked: false, isPermanentLock: false, remainingSeconds: 0, attemptsLeft: MAX_ATTEMPTS, failedCount: 0, maxAttempts: MAX_ATTEMPTS };
@@ -201,6 +206,27 @@ export function checkTeacherLockout(teacherId: string): LockoutStatus {
   }
 }
 
+export async function syncTeacherLockoutWithSupabase(teacherId: string): Promise<LockoutStatus> {
+  if (typeof window === "undefined") return checkTeacherLockout(teacherId);
+
+  const teacherUuid = getTeacherUuid(teacherId);
+  try {
+    const { data } = await supabase
+      .from("alumnos")
+      .select("estado")
+      .eq("id", teacherUuid)
+      .single();
+
+    if (data && data.estado && !data.estado.toLowerCase().includes("bloqueado")) {
+      // Reception unlocked in Supabase! Clear local lock
+      localStorage.removeItem(`${STORAGE_KEY_PREFIX}teacher_${teacherId}`);
+      window.dispatchEvent(new Event("df_security_lock_updated"));
+    }
+  } catch (e) {}
+
+  return checkTeacherLockout(teacherId);
+}
+
 export function registerFailedTeacherAttempt(teacherId: string, teacherName: string, teacherEmail?: string, teacherSede?: string): LockoutStatus {
   if (typeof window === "undefined") {
     return { isLocked: false, isPermanentLock: false, remainingSeconds: 0, attemptsLeft: 2, failedCount: 1, maxAttempts: MAX_ATTEMPTS };
@@ -226,19 +252,25 @@ export function registerFailedTeacherAttempt(teacherId: string, teacherName: str
 
   if (isPermanentLock) {
     // Sync block to Supabase alumnos so Reception CRM can see it and unlock
+    const teacherUuid = getTeacherUuid(teacherId);
     try {
       supabase
         .from("alumnos")
         .upsert({
-          id: `docente_${teacherId}`,
+          id: teacherUuid,
           nombre_completo: teacherName,
           email: teacherEmail || `${teacherId}@dancefactory.es`,
+          telefono: "600000000",
           plan_activo: "Docente Dance Factory",
           sede: teacherSede || "castilla",
           estado: "Bloqueado por 3 fallos de PIN"
         })
-        .then(({ error }) => {
-          if (error) console.warn("[Security] Error upserting teacher lock to Supabase:", error);
+        .then(({ error, data }) => {
+          if (error) {
+            console.warn("[Security] Error upserting teacher lock to Supabase:", error);
+          } else {
+            console.log("[Security] Teacher lock synced to Supabase successfully:", teacherName);
+          }
         });
     } catch (err) {
       console.warn("[Security] Error syncing teacher lock to Supabase:", err);
@@ -279,11 +311,12 @@ export function unlockTeacher(teacherId: string, teacherName?: string) {
     window.dispatchEvent(new Event("df_security_lock_updated"));
 
     // Sync unlock in Supabase
+    const teacherUuid = getTeacherUuid(teacherId);
     try {
       supabase
         .from("alumnos")
         .update({ estado: "Activo" })
-        .eq("id", `docente_${teacherId}`);
+        .eq("id", teacherUuid);
     } catch {}
 
     logActivity({
