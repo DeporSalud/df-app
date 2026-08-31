@@ -6,16 +6,19 @@ import Link from "next/link";
 import { Lock, Mail, Sparkles, ArrowRight, ShieldCheck, CheckCircle2, User, GraduationCap, KeyRound, AlertTriangle, ShieldAlert, Timer } from "lucide-react";
 import { useStudent } from "@/context/StudentContext";
 import { checkLockout, registerFailedAttempt, registerSuccessfulLogin, LockoutStatus } from "@/lib/securityService";
+import OtpVerificationModal from "@/components/OtpVerificationModal";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { loginWithCredentials, loginAsTeacher } = useStudent();
+  const { loginWithCredentials, loginAsTeacher, requestStudentOtp } = useStudent();
   
   const [selectedRole, setSelectedRole] = useState<"alumno" | "profesor">("alumno");
 
   // Student Form
   const [studentEmail, setStudentEmail] = useState("");
   const [studentPassword, setStudentPassword] = useState("");
+  const [studentAuthMode, setStudentAuthMode] = useState<"password" | "otp">("password");
+  const [otpModalEmail, setOtpModalEmail] = useState<string | null>(null);
 
   // Teacher Form
   const [teacherPin, setTeacherPin] = useState("");
@@ -62,9 +65,25 @@ export default function LoginPage() {
     setErrorMsg("");
     setIsSubmitting(true);
 
-    const email = studentEmail.trim();
-    const pass = studentPassword.trim();
+    const email = studentEmail.trim().toLowerCase();
 
+    if (studentAuthMode === "otp") {
+      if (!email) {
+        setErrorMsg("Por favor, introduce tu correo electrónico.");
+        setIsSubmitting(false);
+        return;
+      }
+      const res = await requestStudentOtp(email);
+      if (res.success) {
+        setOtpModalEmail(email);
+      } else {
+        setErrorMsg(res.error || "No se pudo enviar el código OTP. Inténtalo de nuevo.");
+      }
+      setIsSubmitting(false);
+      return;
+    }
+
+    const pass = studentPassword.trim();
     const success = await loginWithCredentials(email, pass);
 
     if (success) {
@@ -114,6 +133,24 @@ export default function LoginPage() {
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  if (otpModalEmail) {
+    return (
+      <OtpVerificationModal
+        email={otpModalEmail}
+        title="Acceso por One Time PIN"
+        subtitle="Introduce el código de 6 dígitos enviado a tu correo electrónico:"
+        onSuccess={() => {
+          registerSuccessfulLogin("alumno", otpModalEmail);
+          router.push("/");
+        }}
+        onCancel={() => {
+          setOtpModalEmail(null);
+          setIsSubmitting(false);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col min-h-screen bg-[var(--color-bg)] justify-center p-5 text-left relative overflow-hidden">
@@ -230,6 +267,37 @@ export default function LoginPage() {
           {/* ======================================================== */}
           {selectedRole === "alumno" && (
             <div className="space-y-4 animate-in fade-in duration-200">
+              
+              {/* Toggle Password vs OTP */}
+              <div className="flex gap-2 p-1 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[11px]">
+                <button
+                  type="button"
+                  disabled={lockout.isLocked}
+                  onClick={() => {
+                    setStudentAuthMode("password");
+                    setErrorMsg("");
+                  }}
+                  className={"flex-1 py-1.5 rounded-lg font-bold transition-all text-center cursor-pointer " + (
+                    studentAuthMode === "password" ? "bg-[var(--color-primary)] text-white shadow-sm" : "text-slate-400 hover:text-white"
+                  )}
+                >
+                  Entrar con Contraseña
+                </button>
+                <button
+                  type="button"
+                  disabled={lockout.isLocked}
+                  onClick={() => {
+                    setStudentAuthMode("otp");
+                    setErrorMsg("");
+                  }}
+                  className={"flex-1 py-1.5 rounded-lg font-bold transition-all text-center cursor-pointer " + (
+                    studentAuthMode === "otp" ? "bg-[var(--color-primary)] text-white shadow-sm" : "text-slate-400 hover:text-white"
+                  )}
+                >
+                  One Time PIN (OTP)
+                </button>
+              </div>
+
               <form onSubmit={handleStudentSubmit} className="space-y-3.5">
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider block">
@@ -249,30 +317,48 @@ export default function LoginPage() {
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider block">
-                    Contraseña
-                  </label>
-                  <div className="relative flex items-center">
-                    <Lock className="absolute left-3.5 w-4 h-4 text-slate-400" />
-                    <input
-                      type="password"
-                      required
-                      disabled={lockout.isLocked || isSubmitting}
-                      value={studentPassword}
-                      onChange={(e) => setStudentPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-white text-xs focus:outline-none focus:border-[var(--color-primary)] transition-colors placeholder:text-slate-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
+                {studentAuthMode === "password" ? (
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider block">
+                      Contraseña
+                    </label>
+                    <div className="relative flex items-center">
+                      <Lock className="absolute left-3.5 w-4 h-4 text-slate-400" />
+                      <input
+                        type="password"
+                        required
+                        disabled={lockout.isLocked || isSubmitting}
+                        value={studentPassword}
+                        onChange={(e) => setStudentPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full pl-10 pr-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-white text-xs focus:outline-none focus:border-[var(--color-primary)] transition-colors placeholder:text-slate-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 text-[11px] text-slate-300 space-y-1">
+                    <p className="font-semibold text-white flex items-center gap-1.5">
+                      <KeyRound size={14} className="text-[var(--color-secondary)]" />
+                      <span>Acceso seguro por código de un solo uso</span>
+                    </p>
+                    <p className="text-[10.5px] text-slate-400 leading-normal">
+                      Te enviaremos un código One Time PIN (OTP) de 6 dígitos a tu correo para acceder instantáneamente a tu carnet.
+                    </p>
+                  </div>
+                )}
 
                 <button
                   type="submit"
                   disabled={lockout.isLocked || isSubmitting}
                   className="w-full bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-bold py-3.5 rounded-xl text-xs transition-all shadow-lg shadow-[var(--color-primary)]/25 flex items-center justify-center gap-2 group cursor-pointer active:scale-95 mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <span>{isSubmitting ? "Accediendo..." : "Entrar a Mi Carnet de Alumno"}</span>
+                  <span>
+                    {isSubmitting
+                      ? "Procesando..."
+                      : studentAuthMode === "otp"
+                      ? "Solicitar Código OTP (6 dígitos)"
+                      : "Entrar a Mi Carnet de Alumno"}
+                  </span>
                   <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
                 </button>
               </form>

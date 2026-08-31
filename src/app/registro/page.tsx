@@ -19,6 +19,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { useStudent } from "@/context/StudentContext";
+import OtpVerificationModal from "@/components/OtpVerificationModal";
 
 export default function RegistroPage() {
   const router = useRouter();
@@ -98,84 +99,21 @@ export default function RegistroPage() {
     }
   };
 
-  // IF REGISTRATION COMPLETED -> SHOW EMAIL VERIFICATION SCREEN
+  // IF REGISTRATION COMPLETED -> SHOW OTP VERIFICATION MODAL
   if (registeredEmail) {
     return (
-      <div className="flex flex-col min-h-screen bg-[var(--color-bg)] justify-center p-6 text-center relative overflow-hidden">
-        {/* Glow Effects */}
-        <div className="absolute -top-20 -right-20 w-60 h-60 bg-[var(--color-primary)]/20 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="absolute -bottom-20 -left-20 w-60 h-60 bg-[var(--color-secondary)]/15 rounded-full blur-3xl pointer-events-none"></div>
-
-        <div className="max-w-md w-full mx-auto space-y-6 relative z-10 py-6">
-          
-          <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-3xl p-8 shadow-2xl space-y-6 animate-in zoom-in-95 duration-200">
-            
-            {/* Animated Icon */}
-            <div className="w-20 h-20 rounded-3xl bg-[var(--color-primary)]/15 border border-[var(--color-primary)]/30 text-[var(--color-secondary)] mx-auto flex items-center justify-center shadow-xl shadow-[var(--color-primary)]/25 relative">
-              <MailCheck size={40} className="text-[var(--color-secondary)]" />
-              <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-emerald-500 border-2 border-[var(--color-bg-card)] flex items-center justify-center text-[10px] font-bold text-white">
-                ✓
-              </span>
-            </div>
-
-            <div className="space-y-2">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-secondary)] bg-[var(--color-secondary)]/10 px-3 py-1 rounded-full border border-[var(--color-secondary)]/20">
-                PASO FINAL • VERIFICACIÓN REQUERIDA
-              </span>
-              <h1 className="text-2xl font-extrabold font-[family-name:var(--font-heading)] text-white tracking-tight pt-1">
-                Revisa tu Correo Electrónico
-              </h1>
-              <p className="text-xs text-slate-300 leading-relaxed">
-                Hemos enviado un enlace de confirmación seguro a:
-              </p>
-              <div className="py-2 px-3.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-xs font-mono font-bold text-[var(--color-secondary)] inline-block max-w-full truncate shadow-inner">
-                {registeredEmail}
-              </div>
-            </div>
-
-            {/* Instruction Steps */}
-            <div className="space-y-2.5 text-left bg-[var(--color-bg)] p-4 rounded-2xl border border-[var(--color-border)] text-xs text-slate-300">
-              <div className="flex items-start gap-2.5">
-                <span className="w-5 h-5 rounded-full bg-[var(--color-primary)]/20 text-[var(--color-secondary)] font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">1</span>
-                <span>Abre el correo enviado por <strong>Dance Factory</strong>.</span>
-              </div>
-              <div className="flex items-start gap-2.5">
-                <span className="w-5 h-5 rounded-full bg-[var(--color-primary)]/20 text-[var(--color-secondary)] font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">2</span>
-                <span>Haz clic en <strong>"Confirmar mi cuenta y acceder"</strong>.</span>
-              </div>
-              <div className="flex items-start gap-2.5">
-                <span className="w-5 h-5 rounded-full bg-[var(--color-primary)]/20 text-[var(--color-secondary)] font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">3</span>
-                <span>Tu carnet digital y acceso a clases se activarán automáticamente.</span>
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="space-y-2.5 pt-2">
-              <Link
-                href={`/auth/confirm?email=${encodeURIComponent(registeredEmail)}`}
-                className="w-full py-3.5 px-4 rounded-2xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-extrabold text-xs shadow-lg shadow-[var(--color-primary)]/25 flex items-center justify-center gap-2 transition-all active:scale-95 group"
-              >
-                <span>Acceder Ahora (Confirmar Cuenta)</span>
-                <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
-              </Link>
-
-              <Link
-                href="/login"
-                className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-slate-400 hover:text-white transition-colors block text-center"
-              >
-                Volver a Iniciar Sesión
-              </Link>
-            </div>
-
-          </div>
-
-          <p className="text-[11px] text-slate-500 flex items-center justify-center gap-1">
-            <ShieldCheck size={14} className="text-emerald-400" />
-            <span>Verificación segura de cuenta • Dance Factory</span>
-          </p>
-
-        </div>
-      </div>
+      <OtpVerificationModal
+        email={registeredEmail}
+        title="Verifica tu Cuenta"
+        subtitle="Introduce el código One Time PIN (OTP) de 6 dígitos enviado a tu correo:"
+        onSuccess={() => {
+          router.push("/");
+        }}
+        onCancel={() => {
+          setRegisteredEmail("");
+          setIsSubmitting(false);
+        }}
+      />
     );
   }
 

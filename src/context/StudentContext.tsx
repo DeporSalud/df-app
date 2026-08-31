@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { supabase } from "@/lib/supabase/client";
+import { generateAndSendOtp, verifyOtpCode } from "@/lib/otpService";
 
 export interface Student {
   id: string;
@@ -73,7 +74,9 @@ interface StudentContextType {
   setUserRole: (role: UserRole) => void;
   loginWithCredentials: (email: string, pass: string) => Promise<boolean>;
   loginAsTeacher: (pinOrEmail: string, pass?: string) => Promise<boolean>;
-  registerStudent: (data: RegisterStudentData) => Promise<{ success: boolean; error?: string }>;
+  registerStudent: (data: RegisterStudentData) => Promise<{ success: boolean; error?: string; requiresOtp?: boolean; email?: string }>;
+  verifyStudentWithOtp: (email: string, code: string) => Promise<{ success: boolean; error?: string }>;
+  requestStudentOtp: (email: string) => Promise<{ success: boolean; code?: string; error?: string }>;
   logout: () => void;
   refetchStudents: () => Promise<void>;
 }
@@ -253,7 +256,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
     return false;
   };
 
-  const registerStudent = async (studentData: RegisterStudentData): Promise<{ success: boolean; error?: string }> => {
+  const registerStudent = async (studentData: RegisterStudentData): Promise<{ success: boolean; error?: string; requiresOtp?: boolean; email?: string }> => {
     try {
       const cleanEmail = studentData.email.trim().toLowerCase();
       
@@ -284,7 +287,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
             fecha_nacimiento: studentData.fecha_nacimiento || null,
             plan_activo: planActivo,
             clases_restantes: remainingClasses,
-            estado: "Activo"
+            estado: "Pendiente"
           }
         ])
         .select()
@@ -295,18 +298,86 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         return { success: false, error: error?.message || "No se pudo registrar la cuenta. Inténtalo de nuevo." };
       }
 
-      await fetchStudents();
-      setUserRole("alumno");
-      setCurrentStudentIdState(data.id);
-      setIsAuthenticated(true);
-      if (typeof window !== "undefined") {
-        localStorage.setItem("df_auth_role", "alumno");
-        localStorage.setItem("df_student_session_id", data.id);
-      }
+      // Generate initial OTP for email verification
+      await generateAndSendOtp(cleanEmail);
 
-      return { success: true };
+      return { 
+        success: true, 
+        requiresOtp: true, 
+        email: cleanEmail 
+      };
     } catch (err: any) {
       return { success: false, error: err.message || "Error inesperado durante el registro" };
+    }
+  };
+
+  const verifyStudentWithOtp = async (email: string, code: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const cleanEmail = email.trim().toLowerCase();
+      const verification = verifyOtpCode(cleanEmail, code);
+
+      if (!verification.success) {
+        return { success: false, error: verification.error || "Código de verificación incorrecto." };
+      }
+
+      // Activate student in Supabase
+      const { data } = await supabase
+        .from("alumnos")
+        .update({ estado: "Activo" })
+        .ilike("email", cleanEmail)
+        .select()
+        .single();
+
+      let targetStudent = data;
+
+      if (!targetStudent) {
+        // Find existing student by email
+        const { data: found } = await supabase
+          .from("alumnos")
+          .select("*")
+          .ilike("email", cleanEmail)
+          .single();
+        targetStudent = found;
+      }
+
+      if (targetStudent) {
+        await fetchStudents();
+        setUserRole("alumno");
+        setCurrentStudentIdState(targetStudent.id);
+        setIsAuthenticated(true);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("df_auth_role", "alumno");
+          localStorage.setItem("df_student_session_id", targetStudent.id);
+        }
+        return { success: true };
+      }
+
+      // Demo fallback match
+      const demoMatch = students.find(s => s.email?.toLowerCase() === cleanEmail);
+      if (demoMatch) {
+        setUserRole("alumno");
+        setCurrentStudentIdState(demoMatch.id);
+        setIsAuthenticated(true);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("df_auth_role", "alumno");
+          localStorage.setItem("df_student_session_id", demoMatch.id);
+        }
+        return { success: true };
+      }
+
+      return { success: false, error: "No se encontró el alumno correspondiente en la base de datos." };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Error al verificar el código OTP." };
+    }
+  };
+
+  const requestStudentOtp = async (email: string): Promise<{ success: boolean; code?: string; error?: string }> => {
+    try {
+      const cleanEmail = email.trim().toLowerCase();
+      const res = await generateAndSendOtp(cleanEmail);
+      return res;
+    } catch (err: any) {
+      return { success: false, error: err.message || "Error al enviar el código OTP." };
     }
   };
 
@@ -356,6 +427,8 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       loginWithCredentials,
       loginAsTeacher,
       registerStudent,
+      verifyStudentWithOtp,
+      requestStudentOtp,
       logout,
       refetchStudents: fetchStudents 
     }}>
