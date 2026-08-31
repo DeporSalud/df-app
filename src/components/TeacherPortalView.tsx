@@ -168,16 +168,30 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
     setIsLoading(true);
 
     try {
-      const { data: allStudents } = await supabase.from("alumnos").select("*").order("nombre_completo", { ascending: true });
-      
+      // 1. Fetch real enrollments from alumnos_clases
+      const { data: rawEnrollments, error: rawErr } = await supabase
+        .from("alumnos_clases")
+        .select("alumno_id")
+        .eq("clase_id", clase.id);
+
       let classStudents: any[] = [];
-      if (allStudents && allStudents.length > 0) {
-        classStudents = allStudents.slice(0, 14).map((s, idx) => ({
-          ...s,
-          debe_cuota: idx === 2 || idx === 6,
-          bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0
-        }));
+      if (!rawErr && rawEnrollments && rawEnrollments.length > 0) {
+        const studentIds = rawEnrollments.map((e: any) => e.alumno_id);
+        const { data: studentsList } = await supabase
+          .from("alumnos")
+          .select("*")
+          .in("id", studentIds)
+          .order("nombre_completo", { ascending: true });
+
+        if (studentsList) {
+          classStudents = studentsList.map((s: any) => ({
+            ...s,
+            bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0,
+            debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
+          }));
+        }
       }
+
       setRoster(classStudents);
 
       // Today's attendances
