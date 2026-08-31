@@ -26,9 +26,9 @@ export function generateRandomOtpCode(): string {
 }
 
 /**
- * Generates and sends a 6-digit OTP code for the specified email.
+ * Generates and sends a 6-digit OTP code for the specified email via Hostinger SMTP.
  */
-export async function generateAndSendOtp(email: string): Promise<{
+export async function generateAndSendOtp(email: string, studentName?: string): Promise<{
   success: boolean;
   code?: string;
   error?: string;
@@ -70,8 +70,32 @@ export async function generateAndSendOtp(email: string): Promise<{
       lastSentAt: now
     };
 
+    // Save locally for instant verification
     localStorage.setItem(key, JSON.stringify(data));
     console.log(`[Dance Factory OTP] 🔑 Código OTP generado para ${cleanEmail}: [ ${code} ]`);
+
+    // Dispatch real email via Hostinger SMTP Route
+    try {
+      const response = await fetch("/api/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: cleanEmail,
+          code,
+          name: studentName
+        })
+      });
+
+      const resData = await response.json();
+      if (!response.ok || !resData.success) {
+        console.warn("[Dance Factory OTP] Aviso al enviar email:", resData.error);
+        // We still allow code to be verified locally if SMTP has temporary network issue
+      } else {
+        console.log(`[Dance Factory OTP] ✉️ Correo enviado con éxito a ${cleanEmail}`);
+      }
+    } catch (netErr) {
+      console.error("[Dance Factory OTP] Error de conexión con /api/send-otp:", netErr);
+    }
 
     return {
       success: true,

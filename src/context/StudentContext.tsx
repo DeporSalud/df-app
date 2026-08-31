@@ -298,8 +298,8 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         return { success: false, error: error?.message || "No se pudo registrar la cuenta. Inténtalo de nuevo." };
       }
 
-      // Generate initial OTP for email verification
-      await generateAndSendOtp(cleanEmail);
+      // Generate initial OTP and dispatch branded email via Hostinger SMTP
+      await generateAndSendOtp(cleanEmail, studentData.nombre_completo);
 
       return { 
         success: true, 
