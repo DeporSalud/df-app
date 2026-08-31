@@ -14,8 +14,12 @@ export default function AppHome() {
   const { userRole, currentStudent, currentTeacher, isLoading, isAuthenticated, logout } = useStudent();
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.push("/login");
+    if (typeof window !== "undefined") {
+      const hasStudentSession = !!localStorage.getItem("df_student_session_id");
+      const hasTeacherSession = !!localStorage.getItem("df_teacher_session_id");
+      if (!isLoading && !isAuthenticated && !hasStudentSession && !hasTeacherSession) {
+        router.push("/login");
+      }
     }
   }, [isLoading, isAuthenticated, router]);
 

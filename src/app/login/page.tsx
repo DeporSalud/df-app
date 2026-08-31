@@ -181,7 +181,9 @@ export default function LoginPage() {
         }}
         onSuccess={() => {
           registerSuccessfulLogin("alumno", otpModalEmail);
-          router.push("/");
+          if (typeof window !== "undefined") {
+            window.location.href = "/";
+          }
         }}
         onCancel={() => {
           setOtpModalEmail(null);

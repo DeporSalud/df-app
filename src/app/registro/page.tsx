@@ -30,8 +30,7 @@ export default function RegistroPage() {
     email: "",
     telefono: "",
     dni: "",
-    fecha_nacimiento: "",
-    password: ""
+    fecha_nacimiento: ""
   });
 
   const [acceptTerms, setAcceptTerms] = useState(false);
@@ -56,8 +55,8 @@ export default function RegistroPage() {
       return;
     }
 
-    if (!formData.nombre_completo || !formData.email || !formData.telefono || !formData.password) {
-      setErrorMsg("Por favor, completa todos los campos obligatorios (*).");
+    if (!formData.nombre_completo.trim() || !formData.email.trim() || !formData.telefono.trim()) {
+      setErrorMsg("Por favor, completa los campos obligatorios marcados con asterisco (*).");
       return;
     }
 
@@ -93,7 +92,9 @@ export default function RegistroPage() {
           return await verifyStudentWithOtp(registeredEmail, code);
         }}
         onSuccess={() => {
-          router.push("/");
+          if (typeof window !== "undefined") {
+            window.location.href = "/";
+          }
         }}
         onCancel={() => {
           setRegisteredEmail(null);
@@ -239,22 +240,15 @@ export default function RegistroPage() {
               </div>
             </div>
 
-            {/* 6. Contraseña */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-[var(--color-text-title)] uppercase tracking-wider block">
-                Contraseña
-              </label>
-              <div className="relative flex items-center">
-                <Lock className="absolute left-3 w-4 h-4 text-[var(--color-text-secondary)]" />
-                <input
-                  type="password"
-                  name="password"
-                  value={formData.password}
-                  onChange={handleChange}
-                  placeholder="Crea tu clave de acceso"
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-white text-xs focus:outline-none focus:border-[var(--color-primary)] transition-colors placeholder:text-slate-500"
-                />
-              </div>
+            {/* Aviso de Acceso Seguro sin Contraseña */}
+            <div className="p-3 rounded-xl bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 text-[11px] text-slate-300 space-y-1">
+              <p className="font-semibold text-white flex items-center gap-1.5">
+                <Sparkles size={14} className="text-[var(--color-secondary)]" />
+                <span>Acceso Seguro sin Contraseña</span>
+              </p>
+              <p className="text-[10.5px] text-slate-400 leading-normal">
+                No necesitas recordar contraseñas. Te enviaremos un código One Time PIN (OTP) a tu correo para activar y acceder a tu carnet digital.
+              </p>
             </div>
 
             {/* Términos y LOPD */}
