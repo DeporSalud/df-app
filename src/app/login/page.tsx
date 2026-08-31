@@ -28,6 +28,7 @@ import {
   registerSuccessfulLogin, 
   checkTeacherLockout,
   syncTeacherLockoutWithSupabase,
+  syncAllTeachersLockoutsWithSupabase,
   registerFailedTeacherAttempt,
   registerSuccessfulTeacherLogin,
   unlockTeacher,
@@ -83,6 +84,7 @@ export default function LoginPage() {
   const [teacherSearch, setTeacherSearch] = useState("");
   const [teacherPin, setTeacherPin] = useState("");
   const [isPinError, setIsPinError] = useState(false);
+  const [lockedTeacherIds, setLockedTeacherIds] = useState<Set<string>>(new Set());
 
   const [errorMsg, setErrorMsg] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -97,7 +99,21 @@ export default function LoginPage() {
     maxAttempts: 3
   });
 
-  // Refresh teacher lockout status
+  // Global sync for all teachers from Supabase (to update list indicators in real time)
+  const syncAllTeachers = useCallback(async () => {
+    const ids = PROFESORES_LIST.map(p => p.id);
+    const lockedSet = await syncAllTeachersLockoutsWithSupabase(ids);
+    setLockedTeacherIds(lockedSet);
+  }, []);
+
+  useEffect(() => {
+    if (selectedRole !== "profesor") return;
+    syncAllTeachers();
+    const interval = setInterval(syncAllTeachers, 1500);
+    return () => clearInterval(interval);
+  }, [selectedRole, syncAllTeachers]);
+
+  // Refresh teacher lockout status for the active selected teacher
   const syncTeacherLockout = useCallback(async () => {
     if (selectedTeacher) {
       const status = await syncTeacherLockoutWithSupabase(selectedTeacher.id);
@@ -457,7 +473,7 @@ export default function LoginPage() {
                   {/* Grid de Profesores */}
                   <div className="space-y-1.5 max-h-[300px] overflow-y-auto pr-1">
                     {filteredTeachers.map((teacher) => {
-                      const lockStatus = checkTeacherLockout(teacher.id);
+                      const isTeacherLocked = lockedTeacherIds.has(teacher.id) || checkTeacherLockout(teacher.id).isLocked;
 
                       return (
                         <button
@@ -472,14 +488,14 @@ export default function LoginPage() {
                             setTeacherLockout(status);
                           }}
                           className={`w-full p-2.5 rounded-xl border flex items-center justify-between text-left transition-all active:scale-[0.98] cursor-pointer group ${
-                            lockStatus.isLocked
+                            isTeacherLocked
                               ? "bg-red-950/30 border-red-500/40 hover:border-red-400"
                               : "bg-[var(--color-bg)] border-[var(--color-border)] hover:border-[var(--color-secondary)]/60 hover:bg-white/[0.04]"
                           }`}
                         >
                           <div className="flex items-center gap-2.5">
                             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 border ${
-                              lockStatus.isLocked
+                              isTeacherLocked
                                 ? "bg-red-500/20 text-red-400 border-red-500/40"
                                 : "bg-[var(--color-secondary)]/15 text-[var(--color-secondary)] border-[var(--color-secondary)]/30 group-hover:bg-[var(--color-secondary)] group-hover:text-slate-950 transition-colors"
                             }`}>
@@ -495,7 +511,7 @@ export default function LoginPage() {
                             </div>
                           </div>
 
-                          {lockStatus.isLocked ? (
+                          {isTeacherLocked ? (
                             <span className="text-[10px] font-mono font-bold text-red-400 bg-red-500/15 px-2 py-0.5 rounded border border-red-500/30 flex items-center gap-1">
                               <Lock size={10} /> Bloqueado
                             </span>

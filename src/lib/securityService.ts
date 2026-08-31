@@ -227,6 +227,44 @@ export async function syncTeacherLockoutWithSupabase(teacherId: string): Promise
   return checkTeacherLockout(teacherId);
 }
 
+export async function syncAllTeachersLockoutsWithSupabase(teacherIds: string[]): Promise<Set<string>> {
+  const lockedIds = new Set<string>();
+  if (typeof window === "undefined") return lockedIds;
+
+  try {
+    const { data } = await supabase
+      .from("alumnos")
+      .select("id, estado")
+      .ilike("estado", "%Bloqueado%");
+
+    const blockedUuids = new Set((data || []).map(d => d.id));
+
+    for (const id of teacherIds) {
+      const uuid = getTeacherUuid(id);
+      const isBlockedInDb = blockedUuids.has(uuid);
+
+      if (isBlockedInDb) {
+        lockedIds.add(id);
+        const state = {
+          failedCount: MAX_ATTEMPTS,
+          lockedUntil: Infinity,
+          lockoutStreak: 1,
+          isPermanentLock: true
+        };
+        localStorage.setItem(`${STORAGE_KEY_PREFIX}teacher_${id}`, JSON.stringify(state));
+      } else {
+        // Teacher is active in Supabase: clear local storage if any exists
+        const localKey = `${STORAGE_KEY_PREFIX}teacher_${id}`;
+        if (localStorage.getItem(localKey)) {
+          localStorage.removeItem(localKey);
+        }
+      }
+    }
+  } catch (e) {}
+
+  return lockedIds;
+}
+
 export function registerFailedTeacherAttempt(teacherId: string, teacherName: string, teacherEmail?: string, teacherSede?: string): LockoutStatus {
   if (typeof window === "undefined") {
     return { isLocked: false, isPermanentLock: false, remainingSeconds: 0, attemptsLeft: 2, failedCount: 1, maxAttempts: MAX_ATTEMPTS };
