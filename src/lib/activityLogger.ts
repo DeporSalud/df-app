@@ -16,6 +16,7 @@ export type ActivityType =
   | 'solicitud_bono'
   | 'seguridad_intento_fallido'
   | 'seguridad_bloqueo'
+  | 'seguridad_desbloqueo'
   | 'email_credenciales';
 
 export interface ActivityLogItem {

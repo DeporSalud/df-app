@@ -1,16 +1,54 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Lock, Mail, Sparkles, ArrowRight, ShieldCheck, CheckCircle2, User, GraduationCap, KeyRound, AlertTriangle, ShieldAlert, Timer } from "lucide-react";
+import { 
+  User, 
+  GraduationCap, 
+  KeyRound, 
+  Mail, 
+  ArrowRight, 
+  AlertTriangle, 
+  ShieldAlert, 
+  Timer, 
+  ShieldCheck, 
+  Delete, 
+  Lock, 
+  CheckCircle2, 
+  RefreshCw 
+} from "lucide-react";
 import { useStudent } from "@/context/StudentContext";
 import { checkLockout, registerFailedAttempt, registerSuccessfulLogin, LockoutStatus } from "@/lib/securityService";
 import OtpVerificationModal from "@/components/OtpVerificationModal";
 
+// Safe haptic feedback helper
+const triggerHaptic = (pattern: number | number[] = 15) => {
+  if (typeof window !== "undefined" && typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+    try {
+      navigator.vibrate(pattern);
+    } catch {}
+  }
+};
+
+const KEYPAD_BUTTONS = [
+  { digit: "1", sub: "" },
+  { digit: "2", sub: "ABC" },
+  { digit: "3", sub: "DEF" },
+  { digit: "4", sub: "GHI" },
+  { digit: "5", sub: "JKL" },
+  { digit: "6", sub: "MNO" },
+  { digit: "7", sub: "PQRS" },
+  { digit: "8", sub: "TUV" },
+  { digit: "9", sub: "WXYZ" },
+  { digit: "clear", sub: "C" },
+  { digit: "0", sub: "+" },
+  { digit: "backspace", sub: "⌫" },
+];
+
 export default function LoginPage() {
   const router = useRouter();
-  const { loginWithCredentials, loginAsTeacher, requestStudentOtp, verifyStudentWithOtp } = useStudent();
+  const { loginAsTeacher, requestStudentOtp, verifyStudentWithOtp } = useStudent();
   
   const [selectedRole, setSelectedRole] = useState<"alumno" | "profesor">("alumno");
 
@@ -18,10 +56,9 @@ export default function LoginPage() {
   const [studentEmail, setStudentEmail] = useState("");
   const [otpModalEmail, setOtpModalEmail] = useState<string | null>(null);
 
-  // Teacher Form
+  // Teacher Keypad State (4-digit PIN iPhone style)
   const [teacherPin, setTeacherPin] = useState("");
-  const [teacherEmail, setTeacherEmail] = useState("");
-  const [teacherAuthMode, setTeacherAuthMode] = useState<"pin" | "email">("pin");
+  const [isPinError, setIsPinError] = useState(false);
 
   const [errorMsg, setErrorMsg] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -29,32 +66,43 @@ export default function LoginPage() {
   // Security Lockout State
   const [lockout, setLockout] = useState<LockoutStatus>({
     isLocked: false,
+    isPermanentLock: false,
     remainingSeconds: 0,
     attemptsLeft: 3,
     failedCount: 0,
     maxAttempts: 3
   });
 
-  // Refresh lockout status on mount & role change
-  useEffect(() => {
+  // Refresh lockout status on mount & role change & security updates
+  const syncLockoutStatus = useCallback(() => {
     const status = checkLockout(selectedRole);
     setLockout(status);
+    if (!status.isLocked) {
+      setErrorMsg("");
+      setIsPinError(false);
+    }
   }, [selectedRole]);
 
-  // Live countdown timer for lockout
+  useEffect(() => {
+    syncLockoutStatus();
+    window.addEventListener("df_security_lock_updated", syncLockoutStatus);
+    window.addEventListener("storage", syncLockoutStatus);
+    return () => {
+      window.removeEventListener("df_security_lock_updated", syncLockoutStatus);
+      window.removeEventListener("storage", syncLockoutStatus);
+    };
+  }, [syncLockoutStatus]);
+
+  // Periodic polling if locked (to detect Reception unlock in real time)
   useEffect(() => {
     if (!lockout.isLocked) return;
 
     const interval = setInterval(() => {
-      const updated = checkLockout(selectedRole);
-      setLockout(updated);
-      if (!updated.isLocked) {
-        setErrorMsg("");
-      }
-    }, 1000);
+      syncLockoutStatus();
+    }, 1500);
 
     return () => clearInterval(interval);
-  }, [lockout.isLocked, selectedRole]);
+  }, [lockout.isLocked, syncLockoutStatus]);
 
   // Handle Student Request OTP
   const handleStudentRequestOtp = async (e: React.FormEvent) => {
@@ -78,51 +126,94 @@ export default function LoginPage() {
   };
 
   // Handle Teacher PIN Login
-  const handleTeacherPinLogin = async (pinToUse?: string) => {
-    const pin = pinToUse || teacherPin;
+  const handleTeacherPinLogin = async (pinToVerify: string) => {
+    if (lockout.isLocked || isSubmitting) return;
+
     setErrorMsg("");
-
-    if (lockout.isLocked) {
-      setErrorMsg(`Acceso de profesor bloqueado temporalmente. Inténtalo en ${formatCountdown(lockout.remainingSeconds)}.`);
-      return;
-    }
-
-    if (!pin || pin.length < 4) {
-      setErrorMsg("Por favor, introduce tu PIN de 4 dígitos.");
-      return;
-    }
-
+    setIsPinError(false);
     setIsSubmitting(true);
-    const success = await loginAsTeacher(pin);
+
+    const success = await loginAsTeacher(pinToVerify);
 
     if (success) {
-      registerSuccessfulLogin("profesor", pin);
+      triggerHaptic([20, 20]);
+      registerSuccessfulLogin("profesor", pinToVerify);
       router.push("/");
     } else {
-      const secStatus = registerFailedAttempt("profesor", pin);
+      triggerHaptic([40, 30, 40]);
+      setIsPinError(true);
+      const secStatus = registerFailedAttempt("profesor", pinToVerify);
       setLockout(secStatus);
       setIsSubmitting(false);
 
       if (secStatus.isLocked) {
-        setErrorMsg(`Has superado el límite de ${secStatus.maxAttempts} intentos fallidos. Por seguridad del claustro docente, el acceso ha sido bloqueado temporalmente.`);
+        setErrorMsg("Acceso docente bloqueado tras 3 intentos fallidos.");
       } else {
-        setErrorMsg(`PIN o credencial de profesor incorrecta. Te quedan ${secStatus.attemptsLeft} intento(s) antes del bloqueo de seguridad.`);
+        setErrorMsg(`PIN incorrecto. Te quedan ${secStatus.attemptsLeft} intento(s) antes del bloqueo.`);
+        setTimeout(() => {
+          setTeacherPin("");
+          setIsPinError(false);
+        }, 800);
       }
     }
   };
 
-  const handleStudentSubmit = (e: React.FormEvent) => {
-    handleStudentRequestOtp(e);
-  };
+  // Numpad Key Click Handler
+  const handleKeypadClick = (digit: string) => {
+    if (lockout.isLocked || isSubmitting) return;
+    triggerHaptic(15);
+    setErrorMsg("");
+    setIsPinError(false);
 
-  const handleTeacherSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (teacherAuthMode === "pin") {
-      handleTeacherPinLogin();
-    } else {
-      handleTeacherPinLogin(teacherEmail);
+    if (teacherPin.length >= 4) return;
+
+    const nextPin = teacherPin + digit;
+    setTeacherPin(nextPin);
+
+    if (nextPin.length === 4) {
+      handleTeacherPinLogin(nextPin);
     }
   };
+
+  const handleKeypadDelete = () => {
+    if (lockout.isLocked || isSubmitting) return;
+    triggerHaptic(15);
+    setErrorMsg("");
+    setIsPinError(false);
+    setTeacherPin(prev => prev.slice(0, -1));
+  };
+
+  const handleKeypadClear = () => {
+    if (lockout.isLocked || isSubmitting) return;
+    triggerHaptic(15);
+    setErrorMsg("");
+    setIsPinError(false);
+    setTeacherPin("");
+  };
+
+  // Physical Keyboard Support for PIN on Desktop
+  useEffect(() => {
+    if (selectedRole !== "profesor" || lockout.isLocked || isSubmitting) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeTag = (document.activeElement?.tagName || "").toUpperCase();
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(activeTag)) return;
+
+      if (/^[0-9]$/.test(e.key)) {
+        e.preventDefault();
+        handleKeypadClick(e.key);
+      } else if (e.key === "Backspace") {
+        e.preventDefault();
+        handleKeypadDelete();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        handleKeypadClear();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedRole, lockout.isLocked, isSubmitting, teacherPin]);
 
   const formatCountdown = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -188,6 +279,7 @@ export default function LoginPage() {
             onClick={() => {
               setSelectedRole("alumno");
               setErrorMsg("");
+              setIsPinError(false);
             }}
             className={"flex-1 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer " + (
               selectedRole === "alumno"
@@ -204,6 +296,7 @@ export default function LoginPage() {
             onClick={() => {
               setSelectedRole("profesor");
               setErrorMsg("");
+              setIsPinError(false);
             }}
             className={"flex-1 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer " + (
               selectedRole === "profesor"
@@ -217,58 +310,21 @@ export default function LoginPage() {
         </div>
 
         {/* LOGIN CARD */}
-        <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-3xl p-6 shadow-2xl space-y-5 relative overflow-hidden">
+        <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 relative overflow-hidden">
           
-          {/* LOCKOUT OVERLAY / BANNER */}
-          {lockout.isLocked ? (
-            <div className="p-4 rounded-2xl bg-red-950/60 border-2 border-red-500/50 text-red-200 text-xs space-y-3 shadow-xl animate-in fade-in zoom-in-95">
-              <div className="flex items-center gap-2.5 text-red-400 font-bold uppercase tracking-wider text-[11px]">
-                <ShieldAlert size={18} className="shrink-0 animate-bounce text-red-400" />
-                <span>Bloqueo por Seguridad Activo</span>
-              </div>
-              
-              <p className="text-xs leading-relaxed text-slate-300">
-                Se han registrado <strong className="text-white">3 intentos fallidos consecutivos</strong> de acceso como {selectedRole}. Para prevenir accesos no autorizados, el formulario ha sido bloqueado temporalmente.
-              </p>
-
-              <div className="bg-black/50 border border-red-500/30 rounded-xl p-3 flex items-center justify-between">
-                <span className="text-[11px] text-slate-400 flex items-center gap-1.5 font-medium">
-                  <Timer size={14} className="text-red-400" />
-                  Tiempo restante de espera:
-                </span>
-                <span className="text-lg font-mono font-black text-red-400 tracking-widest animate-pulse">
-                  {formatCountdown(lockout.remainingSeconds)}
-                </span>
-              </div>
-
-              <p className="text-[10px] text-slate-400 text-center">
-                Si has olvidado tu contraseña o PIN, contacta con Recepción.
-              </p>
-            </div>
-          ) : (
-            <>
-              {errorMsg && (
-                <div className="p-3.5 rounded-xl bg-[var(--color-danger)]/15 border border-[var(--color-danger)]/30 text-[var(--color-danger)] text-xs font-semibold flex items-start gap-2.5 animate-in fade-in">
-                  <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <p>{errorMsg}</p>
-                    {lockout.failedCount > 0 && (
-                      <span className="inline-block text-[10px] font-mono bg-red-500/20 text-red-300 px-2 py-0.5 rounded border border-red-500/30">
-                        Intentos restantes: {lockout.attemptsLeft} / {lockout.maxAttempts}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
           {/* ======================================================== */}
-          {/* TAB ALUMNO FORM (100% PASSWORDLESS OTP) */}
+          {/* TAB ALUMNO (100% PASSWORDLESS OTP) */}
           {/* ======================================================== */}
           {selectedRole === "alumno" && (
             <div className="space-y-4 animate-in fade-in duration-200">
               
+              {errorMsg && (
+                <div className="p-3.5 rounded-xl bg-[var(--color-danger)]/15 border border-[var(--color-danger)]/30 text-[var(--color-danger)] text-xs font-semibold flex items-start gap-2.5 animate-in fade-in">
+                  <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                  <p>{errorMsg}</p>
+                </div>
+              )}
+
               <div className="p-3.5 rounded-2xl bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 text-[11.5px] text-slate-300 space-y-1.5">
                 <p className="font-bold text-white flex items-center gap-1.5">
                   <KeyRound size={15} className="text-[var(--color-secondary)]" />
@@ -279,7 +335,7 @@ export default function LoginPage() {
                 </p>
               </div>
 
-              <form onSubmit={handleStudentSubmit} className="space-y-3.5">
+              <form onSubmit={handleStudentRequestOtp} className="space-y-3.5">
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider block">
                     Correo Electrónico de Alumno
@@ -289,7 +345,7 @@ export default function LoginPage() {
                     <input
                       type="email"
                       required
-                      disabled={lockout.isLocked || isSubmitting}
+                      disabled={isSubmitting}
                       value={studentEmail}
                       onChange={(e) => setStudentEmail(e.target.value)}
                       placeholder="ej. alumno@gmail.com"
@@ -300,7 +356,7 @@ export default function LoginPage() {
 
                 <button
                   type="submit"
-                  disabled={lockout.isLocked || isSubmitting}
+                  disabled={isSubmitting}
                   className="w-full bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-bold py-3.5 rounded-xl text-xs transition-all shadow-lg shadow-[var(--color-primary)]/25 flex items-center justify-center gap-2 group cursor-pointer active:scale-95 mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isSubmitting ? (
@@ -328,83 +384,138 @@ export default function LoginPage() {
           )}
 
           {/* ======================================================== */}
-          {/* TAB PROFESOR FORM */}
+          {/* TAB PROFESOR (100% PIN KEYPAD IPHONE STYLE) */}
           {/* ======================================================== */}
           {selectedRole === "profesor" && (
-            <div className="space-y-4 animate-in fade-in duration-200">
+            <div className="space-y-4 animate-in fade-in duration-200 text-center">
               
-              <div className="flex gap-2 p-1 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-[11px]">
-                <button
-                  type="button"
-                  disabled={lockout.isLocked}
-                  onClick={() => setTeacherAuthMode("pin")}
-                  className={"flex-1 py-1.5 rounded-lg font-bold transition-all text-center cursor-pointer " + (
-                    teacherAuthMode === "pin" ? "bg-[var(--color-secondary)] text-slate-950 shadow-sm" : "text-slate-400 hover:text-white"
-                  )}
-                >
-                  Entrar con PIN (4 dígitos)
-                </button>
-                <button
-                  type="button"
-                  disabled={lockout.isLocked}
-                  onClick={() => setTeacherAuthMode("email")}
-                  className={"flex-1 py-1.5 rounded-lg font-bold transition-all text-center cursor-pointer " + (
-                    teacherAuthMode === "email" ? "bg-[var(--color-secondary)] text-slate-950 shadow-sm" : "text-slate-400 hover:text-white"
-                  )}
-                >
-                  Entrar con Email
-                </button>
-              </div>
-
-              <form onSubmit={handleTeacherSubmit} className="space-y-3.5">
-                {teacherAuthMode === "pin" ? (
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider block">
-                      Código PIN Docente (4 dígitos)
-                    </label>
-                    <div className="relative flex items-center">
-                      <KeyRound className="absolute left-3.5 w-4 h-4 text-slate-400" />
-                      <input
-                        type="password"
-                        maxLength={4}
-                        required
-                        disabled={lockout.isLocked || isSubmitting}
-                        value={teacherPin}
-                        onChange={(e) => setTeacherPin(e.target.value)}
-                        placeholder="Introduce tu PIN de 4 dígitos"
-                        className="w-full pl-10 pr-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-white text-xs font-mono tracking-widest focus:outline-none focus:border-[var(--color-secondary)] transition-colors placeholder:text-slate-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                      />
-                    </div>
+              {/* LOCKOUT SCREEN FOR TEACHERS */}
+              {lockout.isLocked ? (
+                <div className="p-5 sm:p-6 rounded-2xl bg-red-950/70 border-2 border-red-500/60 text-center space-y-4 shadow-2xl animate-in zoom-in-95">
+                  <div className="w-16 h-16 rounded-full bg-red-500/20 text-red-400 border-2 border-red-500/40 flex items-center justify-center mx-auto shadow-lg shadow-red-500/20">
+                    <ShieldAlert size={32} className="animate-pulse" />
                   </div>
-                ) : (
+                  
                   <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider block">
-                      Correo Corporativo de Profesor
-                    </label>
-                    <div className="relative flex items-center">
-                      <Mail className="absolute left-3.5 w-4 h-4 text-slate-400" />
-                      <input
-                        type="email"
-                        required
-                        disabled={lockout.isLocked || isSubmitting}
-                        value={teacherEmail}
-                        onChange={(e) => setTeacherEmail(e.target.value)}
-                        placeholder="tu.nombre@dancefactory.es"
-                        className="w-full pl-10 pr-4 py-3 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-white text-xs focus:outline-none focus:border-[var(--color-secondary)] transition-colors placeholder:text-slate-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                      />
-                    </div>
+                    <span className="text-[10px] font-mono font-bold text-red-400 uppercase tracking-widest bg-red-500/20 px-3 py-1 rounded-full border border-red-500/30">
+                      Bloqueo por Seguridad Activo
+                    </span>
+                    <h3 className="text-lg font-extrabold text-white pt-1">
+                      Acceso Docente Bloqueado
+                    </h3>
                   </div>
-                )}
 
-                <button
-                  type="submit"
-                  disabled={lockout.isLocked || isSubmitting}
-                  className="w-full bg-[var(--color-secondary)] hover:bg-[var(--color-secondary)]/90 text-slate-950 font-bold py-3.5 rounded-xl text-xs transition-all shadow-lg shadow-[var(--color-secondary)]/25 flex items-center justify-center gap-2 group cursor-pointer active:scale-95 mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <span>{isSubmitting ? "Verificando..." : "Entrar a Mis Clases de Profesor"}</span>
-                  <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
-                </button>
-              </form>
+                  <p className="text-xs text-slate-300 leading-relaxed max-w-xs mx-auto">
+                    Se han registrado <strong>3 intentos fallidos de PIN</strong>. Para proteger el pase de lista y los datos de la escuela, el acceso ha sido bloqueado.
+                  </p>
+
+                  <div className="p-3.5 rounded-xl bg-black/50 border border-red-500/30 text-xs text-amber-300 flex items-center justify-center gap-2 font-semibold">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
+                    <span>Esperando desbloqueo desde Recepción...</span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 leading-normal">
+                    Solicita en Recepción (Studio 1 o Studio 2) que pulsen <strong>Desbloquear Acceso Docente</strong> en el panel de control.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* Header Subtitle */}
+                  <div className="space-y-1">
+                    <p className="text-xs font-bold text-white flex items-center justify-center gap-1.5">
+                      <KeyRound size={15} className="text-[var(--color-secondary)]" />
+                      <span>Introduce tu Código PIN Docente</span>
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Marca tus 4 dígitos para acceder al pase de lista y clases
+                    </p>
+                  </div>
+
+                  {/* Error Alert */}
+                  {errorMsg && (
+                    <div className="p-2.5 rounded-xl bg-[var(--color-danger)]/15 border border-[var(--color-danger)]/30 text-[var(--color-danger)] text-xs font-semibold animate-in fade-in">
+                      <p>{errorMsg}</p>
+                    </div>
+                  )}
+
+                  {/* 4-DOT PIN INDICATOR (IPHONE STYLE) */}
+                  <div className={`flex items-center justify-center gap-4 py-2 ${isPinError ? "animate-shake" : ""}`}>
+                    {[0, 1, 2, 3].map((idx) => {
+                      const isFilled = teacherPin.length > idx;
+                      return (
+                        <div
+                          key={idx}
+                          className={`w-4 h-4 rounded-full transition-all duration-200 ${
+                            isPinError
+                              ? "bg-red-500 border-2 border-red-400 shadow-[0_0_12px_rgba(239,68,68,0.7)]"
+                              : isFilled
+                              ? "bg-[var(--color-secondary)] border-2 border-[var(--color-secondary)] shadow-[0_0_14px_rgba(251,191,36,0.8)] scale-110"
+                              : "bg-transparent border-2 border-slate-600"
+                          }`}
+                        />
+                      );
+                    })}
+                  </div>
+
+                  {/* IPHONE CIRCULAR NUMERIC KEYPAD */}
+                  <div className="grid grid-cols-3 gap-3 max-w-[250px] mx-auto pt-1">
+                    {KEYPAD_BUTTONS.map((item) => {
+                      if (item.digit === "clear") {
+                        return (
+                          <button
+                            key="clear"
+                            type="button"
+                            disabled={isSubmitting || teacherPin.length === 0}
+                            onClick={handleKeypadClear}
+                            className="w-16 h-16 rounded-full flex items-center justify-center text-xs font-bold text-slate-400 hover:text-white transition-all active:scale-95 disabled:opacity-20 disabled:cursor-not-allowed mx-auto cursor-pointer"
+                          >
+                            Borrar
+                          </button>
+                        );
+                      }
+                      if (item.digit === "backspace") {
+                        return (
+                          <button
+                            key="backspace"
+                            type="button"
+                            disabled={isSubmitting || teacherPin.length === 0}
+                            onClick={handleKeypadDelete}
+                            className="w-16 h-16 rounded-full flex items-center justify-center text-slate-400 hover:text-white transition-all active:scale-95 disabled:opacity-20 disabled:cursor-not-allowed mx-auto cursor-pointer"
+                          >
+                            <Delete size={20} />
+                          </button>
+                        );
+                      }
+                      return (
+                        <button
+                          key={item.digit}
+                          type="button"
+                          disabled={isSubmitting}
+                          onClick={() => handleKeypadClick(item.digit)}
+                          className="w-16 h-16 rounded-full bg-white/[0.06] hover:bg-white/[0.12] active:bg-[var(--color-secondary)]/30 active:scale-90 border border-white/10 text-white transition-all flex flex-col items-center justify-center mx-auto cursor-pointer shadow-md select-none group disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <span className="text-xl font-bold font-mono group-hover:text-[var(--color-secondary)] transition-colors leading-none">
+                            {item.digit}
+                          </span>
+                          {item.sub && (
+                            <span className="text-[8px] tracking-widest text-slate-400 font-semibold mt-0.5">
+                              {item.sub}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Attempts Remaining Badge */}
+                  <div className="pt-2">
+                    <span className="text-[10px] font-mono text-slate-400 bg-white/5 px-3 py-1 rounded-full border border-white/10">
+                      {lockout.attemptsLeft === 3 ? "3 intentos permitidos" : `⚠️ ${lockout.attemptsLeft} intentos restantes antes del bloqueo`}
+                    </span>
+                  </div>
+                </>
+              )}
+
             </div>
           )}
 
@@ -413,7 +524,7 @@ export default function LoginPage() {
         {/* Footer Security Note */}
         <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 text-center">
           <ShieldCheck size={14} className="text-emerald-400 shrink-0" />
-          <span>Sistema protegido contra fuerza bruta • Dance Factory Seguridad</span>
+          <span>Blindaje contra fuerza bruta • Desbloqueo por Recepción</span>
         </div>
 
       </div>
