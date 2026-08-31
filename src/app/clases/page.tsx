@@ -476,6 +476,20 @@ function ClasesContent() {
     const matriculaCost = isFirstBonoOfYear ? 15.00 : 0.00;
     const totalAmount = basePrice + matriculaCost;
 
+    const planPendiente = `Pendiente: ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} € - Transferencia Bancaria)`;
+
+    // 1. Sync directly to Supabase so Reception CRM sees it in real time
+    try {
+      await supabase
+        .from("alumnos")
+        .update({ plan_activo: planPendiente })
+        .eq("id", currentStudent.id);
+      if (refetchStudents) await refetchStudents();
+    } catch (dbErr) {
+      console.warn("[Dance Factory] Error al registrar solicitud en base de datos:", dbErr);
+    }
+
+    // 2. Local fallback
     if (typeof window !== "undefined") {
       try {
         const rawReqs = localStorage.getItem("pending_bono_requests");
@@ -512,7 +526,7 @@ function ClasesContent() {
     setModal({
       isOpen: true,
       title: "✓ Transferencia Notificada a Recepción",
-      message: `Hemos registrado tu solicitud para el ${selectedBonoForPayment.nombre} por un importe de ${totalAmount.toFixed(2)} € mediante Transferencia Bancaria.\n\nEn cuanto recepción verifique la recepción del importe en la cuenta de Santander o CaixaBank, tu saldo se actualizará automáticamente.`,
+      message: `Hemos registrado tu solicitud para el ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) por Transferencia Bancaria.\n\nTu solicitud ya aparece en tiempo real en la pantalla de Recepción. En cuanto comprueben el ingreso en la cuenta de Santander o CaixaBank, validarán tu bono y tus clases se activarán automáticamente.`,
       type: "success",
       confirmText: "Aceptar"
     });
@@ -526,6 +540,20 @@ function ClasesContent() {
     const matriculaCost = isFirstBonoOfYear ? 15.00 : 0.00;
     const totalAmount = basePrice + matriculaCost;
 
+    const planPendiente = `Pendiente: ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} € - Recepción)`;
+
+    // 1. Sync directly to Supabase so Reception CRM sees it in real time
+    try {
+      await supabase
+        .from("alumnos")
+        .update({ plan_activo: planPendiente })
+        .eq("id", currentStudent.id);
+      if (refetchStudents) await refetchStudents();
+    } catch (dbErr) {
+      console.warn("[Dance Factory] Error al registrar solicitud en base de datos:", dbErr);
+    }
+
+    // 2. Local fallback
     if (typeof window !== "undefined") {
       try {
         const rawReqs = localStorage.getItem("pending_bono_requests");
@@ -562,7 +590,7 @@ function ClasesContent() {
     setModal({
       isOpen: true,
       title: "✓ Solicitud Registrada",
-      message: `Hemos registrado tu petición para el ${selectedBonoForPayment.nombre} por un importe de ${totalAmount.toFixed(2)} €${isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : ""}.\n\nPodrás abonarlo en la recepción de tu estudio (en efectivo o datáfono) cuando asistas a tu próxima clase.`,
+      message: `Hemos registrado tu petición para el ${selectedBonoForPayment.nombre} por un importe de ${totalAmount.toFixed(2)} €${isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : ""}.\n\nTu solicitud ya está en la pantalla de Recepción. Podrás abonarlo en el mostrador en efectivo o datáfono cuando asistas a tu clase.`,
       type: "info",
       confirmText: "Aceptar"
     });
