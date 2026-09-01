@@ -185,6 +185,11 @@ export function crearReservaOpenClass(data: {
   return nueva;
 }
 
+export function getReservasPorClaseYSesion(claseId: string, fechaISO: string): OpenClassReserva[] {
+  const all = getOpenClassReservas();
+  return all.filter(r => r.clase_id === claseId && r.fecha_iso === fechaISO && r.estado === "Confirmada");
+}
+
 export function cancelarReservaOpenClass(reservaId: string): boolean {
   const current = getOpenClassReservas();
   const updated = current.map(r => r.id === reservaId ? { ...r, estado: "Cancelada" as const } : r);

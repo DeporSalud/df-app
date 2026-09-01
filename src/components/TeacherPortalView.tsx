@@ -1,15 +1,31 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { 
   UserCheck, Check, Clock, Users, ShieldAlert, Sparkles, Calendar, Search, 
   Lock, LogOut, KeyRound, ArrowLeft, ChevronRight, Flame, Ticket, GraduationCap, 
-  CreditCard, Building2, Trash2, AlertTriangle, Tag, CheckCircle2, ShieldCheck, X, RefreshCw
+  CreditCard, Building2, Trash2, AlertTriangle, Tag, CheckCircle2, ShieldCheck, X, RefreshCw,
+  CalendarDays
 } from "lucide-react";
 import { logActivity } from "@/lib/activityLogger";
 import AppModal, { ModalState } from "@/components/AppModal";
 import { useStudent, Teacher } from "@/context/StudentContext";
+import { 
+  getUpcomingCalendarDates, 
+  CalendarDayItem, 
+  normalizeDay, 
+  normalizeSede, 
+  formatSedeName, 
+  getSesionReservasCount, 
+  isSesionCompleta, 
+  isAlumnoReservadoEnSesion, 
+  crearReservaOpenClass, 
+  cancelarReservaOpenClass,
+  getReservasPorClaseYSesion,
+  getOpenClassReservas,
+  OpenClassReserva
+} from "@/lib/openClassService";
 
 const getDayOrder = (day: string) => {
   const days: Record<string, number> = {
@@ -32,15 +48,19 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   
   const [teacherStudent, setTeacherStudent] = useState<any | null>(null);
 
-  // Mis Clases
+  // Mis Clases & Attendance
   const [clasesProfesor, setClasesProfesor] = useState<any[]>([]);
   const [selectedClase, setSelectedClase] = useState<any | null>(null);
+  const [selectedSessionDate, setSelectedSessionDate] = useState<string>("");
   const [roster, setRoster] = useState<any[]>([]);
   const [rosterSearch, setRosterSearch] = useState<string>("");
   const [asistenciasRegistradas, setAsistenciasRegistradas] = useState<string[]>([]);
   
-  // Open Classes
+  // Open Classes & Calendar State
+  const calendarDays = getUpcomingCalendarDates(30);
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState<CalendarDayItem>(calendarDays[0]);
   const [allOpenClasses, setAllOpenClasses] = useState<any[]>([]);
+  const [openClassReservasVersion, setOpenClassReservasVersion] = useState<number>(0);
   
   // Checkout
   const [selectedBonoForPayment, setSelectedBonoForPayment] = useState<any | null>(null);
@@ -54,6 +74,13 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
 
   const systemDays = ["DOMINGO", "LUNES", "MARTES", "MIÉRCOLES", "JUEVES", "VIERNES", "SÁBADO"];
   const todayStr = systemDays[new Date().getDay()];
+
+  const isOpenClass = (clase: any) => {
+    if (!clase) return false;
+    const name = (clase.nombre_clase || "").toLowerCase();
+    const type = (clase.tipo_clase || "").toLowerCase();
+    return type.includes("open") || name.includes("open") || name.includes("comercial");
+  };
 
   const bonosDocentes = [
     { 
@@ -161,56 +188,129 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
     fetchData();
   }, [teacherName]);
 
-  // 2. Fetch Class Roster & Today's Attendance
-  const handleSelectClase = async (clase: any) => {
-    setSelectedClase(clase);
-    setRosterSearch("");
+  // Load Roster for a class and specific date
+  const loadRosterForDate = async (clase: any, dateIso: string) => {
     setIsLoading(true);
-
     try {
-      // 1. Fetch real enrollments from alumnos_clases
-      const { data: rawEnrollments, error: rawErr } = await supabase
-        .from("alumnos_clases")
-        .select("alumno_id")
-        .eq("clase_id", clase.id);
+      if (isOpenClass(clase)) {
+        // Fetch students & teachers enrolled for this specific session date
+        const sessionReservas = getReservasPorClaseYSesion(clase.id, dateIso);
+        
+        // Fetch all students from DB to enrich details
+        const { data: allDbStudents } = await supabase.from("alumnos").select("*");
+        const dbMap = new Map((allDbStudents || []).map((s: any) => [s.id, s]));
 
-      let classStudents: any[] = [];
-      if (!rawErr && rawEnrollments && rawEnrollments.length > 0) {
-        const studentIds = rawEnrollments.map((e: any) => e.alumno_id);
-        const { data: studentsList } = await supabase
-          .from("alumnos")
-          .select("*")
-          .in("id", studentIds)
-          .order("nombre_completo", { ascending: true });
+        const attendees = sessionReservas.map(r => {
+          const dbS = dbMap.get(r.alumno_id);
+          const isDocente = r.alumno_nombre.toLowerCase().includes("docente") || 
+                            r.alumno_nombre.toLowerCase().includes("profesor") ||
+                            (dbS?.plan_activo || "").toLowerCase().includes("docente");
 
-        if (studentsList) {
-          classStudents = studentsList.map((s: any) => ({
-            ...s,
-            bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0,
-            debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
-          }));
+          return {
+            id: r.alumno_id,
+            nombre_completo: r.alumno_nombre,
+            email: dbS?.email || "",
+            telefono: dbS?.telefono || "",
+            plan_activo: dbS?.plan_activo || (isDocente ? "Docente Dance Factory" : "Open Class"),
+            clases_restantes: dbS?.clases_restantes ?? null,
+            estado: dbS?.estado || "Activo",
+            sede: r.sede,
+            is_docente: isDocente,
+            reserva_id: r.id,
+            fecha_reserva: r.fecha_formateada,
+            bono_agotado: false,
+            debe_cuota: false
+          };
+        });
+
+        setRoster(attendees);
+
+        // Fetch attendances for this specific date
+        const { data: asistenciasData } = await supabase
+          .from("asistencias")
+          .select("alumno_id")
+          .eq("clase_id", clase.id)
+          .gte("fecha_hora", dateIso + "T00:00:00")
+          .lte("fecha_hora", dateIso + "T23:59:59");
+
+        const ids = (asistenciasData || []).map((a: any) => a.alumno_id);
+        setAsistenciasRegistradas(ids);
+      } else {
+        // Regular class: fetch enrollments from alumnos_clases
+        const { data: rawEnrollments, error: rawErr } = await supabase
+          .from("alumnos_clases")
+          .select("alumno_id")
+          .eq("clase_id", clase.id);
+
+        let classStudents: any[] = [];
+        if (!rawErr && rawEnrollments && rawEnrollments.length > 0) {
+          const studentIds = rawEnrollments.map((e: any) => e.alumno_id);
+          const { data: studentsList } = await supabase
+            .from("alumnos")
+            .select("*")
+            .in("id", studentIds)
+            .order("nombre_completo", { ascending: true });
+
+          if (studentsList) {
+            classStudents = studentsList.map((s: any) => ({
+              ...s,
+              bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0,
+              debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
+            }));
+          }
         }
+
+        setRoster(classStudents);
+
+        // Today's attendances
+        const { data: asistenciasData } = await supabase
+          .from("asistencias")
+          .select("alumno_id")
+          .eq("clase_id", clase.id)
+          .gte("fecha_hora", dateIso + "T00:00:00")
+          .lte("fecha_hora", dateIso + "T23:59:59");
+
+        const ids = (asistenciasData || []).map((a: any) => a.alumno_id);
+        setAsistenciasRegistradas(ids);
       }
-
-      setRoster(classStudents);
-
-      // Today's attendances
-      const todayIso = new Date().toISOString().split("T")[0];
-      const { data: asistenciasData } = await supabase
-        .from("asistencias")
-        .select("alumno_id")
-        .eq("clase_id", clase.id)
-        .gte("fecha_hora", todayIso + "T00:00:00")
-        .lte("fecha_hora", todayIso + "T23:59:59");
-
-      const ids = (asistenciasData || []).map((a: any) => a.alumno_id);
-      setAsistenciasRegistradas(ids);
     } catch (err) {
-      console.error("Error fetching class roster:", err);
+      console.error("Error loading roster:", err);
     } finally {
       setIsLoading(false);
     }
   };
+
+  // 2. Fetch Class Roster on Class Selection
+  const handleSelectClase = async (clase: any) => {
+    setSelectedClase(clase);
+    setRosterSearch("");
+    const defaultDate = calendarDays.find(d => normalizeDay(d.dayName) === normalizeDay(clase.dia_semana))?.dateISO || new Date().toISOString().split("T")[0];
+    setSelectedSessionDate(defaultDate);
+    await loadRosterForDate(clase, defaultDate);
+  };
+
+  // Switch session date in Open Class Attendance
+  const handleChangeSessionDate = async (newDateIso: string) => {
+    if (!selectedClase) return;
+    setSelectedSessionDate(newDateIso);
+    await loadRosterForDate(selectedClase, newDateIso);
+  };
+
+  // Listen to external bookings updates in real-time
+  useEffect(() => {
+    const handleReservasUpdated = () => {
+      setOpenClassReservasVersion(v => v + 1);
+      if (selectedClase && selectedSessionDate) {
+        loadRosterForDate(selectedClase, selectedSessionDate);
+      }
+    };
+    window.addEventListener("df_reservas_updated", handleReservasUpdated);
+    window.addEventListener("storage", handleReservasUpdated);
+    return () => {
+      window.removeEventListener("df_reservas_updated", handleReservasUpdated);
+      window.removeEventListener("storage", handleReservasUpdated);
+    };
+  }, [selectedClase, selectedSessionDate]);
 
   // 3. Mark Attendance
   const handleToggleAsistencia = async (studentId: string, studentName: string) => {
@@ -218,17 +318,17 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
     setSavingId(studentId);
 
     const isPresent = asistenciasRegistradas.includes(studentId);
+    const targetDate = selectedSessionDate || new Date().toISOString().split("T")[0];
 
     try {
       if (isPresent) {
-        const todayIso = new Date().toISOString().split("T")[0];
         await supabase
           .from("asistencias")
           .delete()
           .eq("clase_id", selectedClase.id)
           .eq("alumno_id", studentId)
-          .gte("fecha_hora", todayIso + "T00:00:00")
-          .lte("fecha_hora", todayIso + "T23:59:59");
+          .gte("fecha_hora", targetDate + "T00:00:00")
+          .lte("fecha_hora", targetDate + "T23:59:59");
 
         setAsistenciasRegistradas(prev => prev.filter(id => id !== studentId));
 
@@ -245,7 +345,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
           .insert([{
             alumno_id: studentId,
             clase_id: selectedClase.id,
-            fecha_hora: new Date().toISOString()
+            fecha_hora: targetDate + "T" + (selectedClase.hora_inicio || "18:00") + ":00.000Z"
           }]);
 
         setAsistenciasRegistradas(prev => [...prev, studentId]);
@@ -262,6 +362,108 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       console.error("Error updating attendance:", e);
     } finally {
       setSavingId(null);
+    }
+  };
+
+  // 4. Booking Open Class as a Teacher
+  const handleTeacherOpenClassBooking = async (clase: any) => {
+    if (!teacherStudent?.id) return;
+
+    if (isSesionCompleta(clase, selectedCalendarDay.dateISO)) {
+      setModal({
+        isOpen: true,
+        title: "Aforo Completo",
+        message: `El aforo máximo (${clase.aforo_maximo || 20} plazas) para ${clase.nombre_clase} el ${selectedCalendarDay.dayName.toLowerCase()} ${selectedCalendarDay.dayNumber} de ${selectedCalendarDay.monthName} está completo.`,
+        type: "warning"
+      });
+      return;
+    }
+
+    const hasUnlimited = (teacherStudent.plan_activo || "").toLowerCase().includes("ilimitad");
+    const remainingClasses = typeof teacherStudent.clases_restantes === "number" ? teacherStudent.clases_restantes : 0;
+
+    if (!hasUnlimited && remainingClasses <= 0) {
+      setModal({
+        isOpen: true,
+        title: "Bono Docente Requerido",
+        message: "No dispones de saldo de clases en tu Bono Docente para reservar esta Open Class. Puedes solicitar una recarga con 10% de descuento en la pestaña 'Comprar Bono'.",
+        type: "warning"
+      });
+      return;
+    }
+
+    // Deduct 1 class if not unlimited
+    if (!hasUnlimited && remainingClasses > 0) {
+      const newCount = remainingClasses - 1;
+      setTeacherStudent((prev: any) => ({ ...prev, clases_restantes: newCount }));
+      try {
+        await supabase
+          .from("alumnos")
+          .update({ clases_restantes: newCount })
+          .eq("id", teacherStudent.id);
+      } catch (e) {
+        console.error("Error updating teacher classes:", e);
+      }
+    }
+
+    // Create reservation
+    crearReservaOpenClass({
+      alumno_id: teacherStudent.id,
+      alumno_nombre: `${teacherName} (Docente)`,
+      clase,
+      calendarDay: selectedCalendarDay
+    });
+
+    setOpenClassReservasVersion(v => v + 1);
+
+    logActivity({
+      origen: "profesor",
+      tipo_evento: "inscripcion_clase",
+      descripcion: `Docente ${teacherName} reservó plaza en ${clase.nombre_clase} con ${clase.profesor} para el ${selectedCalendarDay.dayName} ${selectedCalendarDay.dayNumber} de ${selectedCalendarDay.monthName}`,
+      usuario_afectado: teacherName,
+      sede: clase.sede === "tejar" ? "Studio 1 Plaza El Tejar" : "Studio 2 Paseo Castilla"
+    });
+
+    setModal({
+      isOpen: true,
+      title: "✓ Plaza Reservada con Éxito",
+      message: `Te has inscrito correctamente en ${clase.nombre_clase} con ${clase.profesor}.\n\n📅 Fecha: ${selectedCalendarDay.dayName} ${selectedCalendarDay.dayNumber} de ${selectedCalendarDay.monthName}\n⏰ Horario: ${clase.hora_inicio} - ${clase.hora_fin}\n🚪 Sala: ${clase.sala || "Sala Principal"}\n\nYa apareces en la lista de asistencia del docente titular para esa sesión.`,
+      type: "success"
+    });
+  };
+
+  // Cancel Booking as a Teacher
+  const handleTeacherCancelBooking = async (clase: any) => {
+    if (!teacherStudent?.id) return;
+    const all = getOpenClassReservas();
+    const found = all.find(r => 
+      r.alumno_id === teacherStudent.id && 
+      r.clase_id === clase.id && 
+      r.fecha_iso === selectedCalendarDay.dateISO && 
+      r.estado === "Confirmada"
+    );
+
+    if (found) {
+      cancelarReservaOpenClass(found.id);
+
+      // Refund 1 class
+      const hasUnlimited = (teacherStudent.plan_activo || "").toLowerCase().includes("ilimitad");
+      if (!hasUnlimited && typeof teacherStudent.clases_restantes === "number") {
+        const newCount = teacherStudent.clases_restantes + 1;
+        setTeacherStudent((prev: any) => ({ ...prev, clases_restantes: newCount }));
+        try {
+          await supabase.from("alumnos").update({ clases_restantes: newCount }).eq("id", teacherStudent.id);
+        } catch (e) {}
+      }
+
+      setOpenClassReservasVersion(v => v + 1);
+
+      setModal({
+        isOpen: true,
+        title: "Reserva Cancelada",
+        message: `Has cancelado tu inscripción para ${clase.nombre_clase} el ${selectedCalendarDay.dayName} ${selectedCalendarDay.dayNumber} de ${selectedCalendarDay.monthName}. Se ha reintegrado 1 clase a tu saldo docente.`,
+        type: "info"
+      });
     }
   };
 
@@ -431,6 +633,50 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                     </div>
                   </div>
 
+                  {/* Open Class Session Date Switcher */}
+                  {isOpenClass(selectedClase) && (
+                    <div className="space-y-2 bg-[var(--color-bg-card)] p-3.5 rounded-2xl border border-[var(--color-border)] shadow-md">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                          <CalendarDays size={13} className="text-amber-400" />
+                          <span>Sesión a Pasar Lista:</span>
+                        </span>
+                        <span className="text-[10px] font-mono font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
+                          {roster.length} inscritos / {selectedClase.aforo_maximo || 20} max
+                        </span>
+                      </div>
+
+                      <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none pt-1">
+                        {calendarDays
+                          .filter(d => normalizeDay(d.dayName) === normalizeDay(selectedClase.dia_semana))
+                          .map((day) => {
+                            const isSelected = selectedSessionDate === day.dateISO;
+                            return (
+                              <button
+                                key={day.dateISO}
+                                onClick={() => handleChangeSessionDate(day.dateISO)}
+                                className={`py-2 px-3 rounded-xl flex flex-col items-center justify-center transition-all cursor-pointer min-w-[65px] shrink-0 border text-center ${
+                                  isSelected
+                                    ? "bg-amber-400 text-slate-950 border-amber-300 font-extrabold shadow-md scale-105"
+                                    : "bg-[var(--color-bg)] text-slate-300 hover:bg-[var(--color-bg-hover)] border-[var(--color-border)]"
+                                }`}
+                              >
+                                <span className={`text-[9px] uppercase font-bold tracking-wider ${isSelected ? "text-slate-950" : "text-amber-400"}`}>
+                                  {day.isToday ? "Hoy" : day.dayShort}
+                                </span>
+                                <span className="text-base font-mono font-black leading-tight">
+                                  {day.dayNumber}
+                                </span>
+                                <span className="text-[8px] opacity-80 uppercase">
+                                  {day.monthShort}
+                                </span>
+                              </button>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Buscador de Alumnos en la Clase */}
                   <div className="relative flex items-center">
                     <Search className="absolute left-3.5 w-4 h-4 text-slate-400" />
@@ -438,7 +684,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                       type="text"
                       value={rosterSearch}
                       onChange={(e) => setRosterSearch(e.target.value)}
-                      placeholder="Buscar alumno en esta clase..."
+                      placeholder="Buscar alumno o profesor en esta clase..."
                       className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[var(--color-bg-card)] border border-[var(--color-border)] text-white text-xs focus:outline-none focus:border-[var(--color-secondary)] transition-all placeholder:text-slate-500"
                     />
                   </div>
@@ -446,7 +692,11 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                   {/* Roster List */}
                   <div className="space-y-2">
                     {filteredRoster.length === 0 ? (
-                      <p className="text-xs text-slate-400 py-6 text-center">No se encontraron alumnos con ese nombre.</p>
+                      <p className="text-xs text-slate-400 py-6 text-center">
+                        {isOpenClass(selectedClase)
+                          ? "No hay alumnos ni profesores inscritos para esta sesión."
+                          : "No se encontraron alumnos con ese nombre."}
+                      </p>
                     ) : (
                       filteredRoster.map((student) => {
                         const isPresent = asistenciasRegistradas.includes(student.id);
@@ -466,6 +716,11 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                                 <strong className="text-xs text-white font-semibold truncate block">
                                   {student.nombre_completo}
                                 </strong>
+                                {student.is_docente && (
+                                  <span className="text-[9px] font-bold text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded border border-amber-500/40">
+                                    DOCENTE
+                                  </span>
+                                )}
                                 {student.debe_cuota && (
                                   <span className="text-[9px] font-bold text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
                                     Pago Pendiente
@@ -473,7 +728,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                                 )}
                               </div>
                               <p className="text-[10px] text-slate-400 mt-0.5 truncate">
-                                {student.plan_activo || "Clases Regulares"} • DNI: {student.dni || "N/A"}
+                                {student.plan_activo || "Open Class"} {student.fecha_reserva ? `• Inscrito para ${student.fecha_reserva}` : ""}
                               </p>
                             </div>
 
@@ -588,44 +843,139 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                 </span>
               </div>
 
-              {allOpenClasses.length === 0 ? (
-                <p className="text-xs text-slate-400 py-8 text-center">No hay sesiones de Open Class programadas.</p>
-              ) : (
-                <div className="space-y-2.5">
-                  {allOpenClasses.map((clase) => (
-                    <div
-                      key={clase.id}
-                      className="p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)] shadow-md flex justify-between items-center gap-3"
-                    >
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 uppercase">
-                          {clase.dia_semana} • {clase.hora_inicio} - {clase.hora_fin}
-                        </span>
-                        <h3 className="text-sm font-bold font-[family-name:var(--font-heading)] text-white">
-                          {clase.nombre_clase}
-                        </h3>
-                        <p className="text-[11px] text-slate-400">
-                          Profesor/a: <strong className="text-white">{clase.profesor}</strong> • {clase.sede === "tejar" ? "Studio 1" : "Studio 2"}
-                        </p>
-                      </div>
-
-                      <button
-                        onClick={() => {
-                          setModal({
-                            isOpen: true,
-                            title: "✓ Reserva Confirmada",
-                            message: "Te has inscrito como docente en " + clase.nombre_clase + " con " + clase.profesor + ".",
-                            type: "success"
-                          });
-                        }}
-                        className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-950 bg-[var(--color-secondary)] hover:bg-[var(--color-secondary)]/90 transition-all shrink-0 active:scale-95 cursor-pointer"
-                      >
-                        Inscribirme
-                      </button>
-                    </div>
-                  ))}
+              {/* SELECTOR DE FECHAS EN CALENDARIO (Docentes) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <CalendarDays size={14} className="text-amber-400" />
+                    <span>Elige el Día al que quieres Asistir</span>
+                  </span>
                 </div>
-              )}
+
+                <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none pt-1">
+                  {calendarDays.map((day) => {
+                    const isSelected = selectedCalendarDay.dateISO === day.dateISO;
+                    return (
+                      <button
+                        key={day.dateISO}
+                        onClick={() => setSelectedCalendarDay(day)}
+                        className={`py-2.5 px-3.5 rounded-2xl flex flex-col items-center justify-center transition-all cursor-pointer min-w-[70px] shrink-0 border ${
+                          isSelected
+                            ? "bg-amber-400 text-slate-950 border-amber-300 font-extrabold shadow-lg shadow-amber-500/30 scale-105"
+                            : "bg-[var(--color-bg-card)] text-slate-300 hover:bg-[var(--color-bg-hover)] border-[var(--color-border)] font-medium"
+                        }`}
+                      >
+                        <span className={`text-[10px] uppercase font-bold tracking-wider ${isSelected ? "text-slate-950" : "text-amber-400"}`}>
+                          {day.isToday ? "Hoy" : day.dayShort}
+                        </span>
+                        <span className="text-lg font-mono font-black leading-tight mt-0.5">
+                          {day.dayNumber}
+                        </span>
+                        <span className="text-[9px] opacity-80 uppercase">
+                          {day.monthShort}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Clases filtradas por el día seleccionado */}
+              <div className="space-y-3 pt-1">
+                <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-2">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <span>Sesiones para:</span>
+                    <span className="text-amber-300 font-extrabold font-mono">
+                      {selectedCalendarDay.dayName} {selectedCalendarDay.dayNumber} de {selectedCalendarDay.monthName}
+                    </span>
+                  </h3>
+                </div>
+
+                {allOpenClasses.filter(c => normalizeDay(c.dia_semana) === normalizeDay(selectedCalendarDay.dayName)).length === 0 ? (
+                  <div className="p-8 text-center space-y-2 bg-[var(--color-bg-card)] rounded-2xl border border-[var(--color-border)] shadow-md">
+                    <Calendar size={28} className="mx-auto text-slate-500" />
+                    <p className="text-xs font-bold text-white">No hay sesiones de Open Class este {selectedCalendarDay.dayName.toLowerCase()}.</p>
+                    <p className="text-[11px] text-slate-400">Prueba a seleccionar otro día en el carrusel superior.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {allOpenClasses
+                      .filter(c => normalizeDay(c.dia_semana) === normalizeDay(selectedCalendarDay.dayName))
+                      .map((clase) => {
+                        const isBooked = isAlumnoReservadoEnSesion(
+                          teacherStudent?.id || "",
+                          clase.id,
+                          selectedCalendarDay.dateISO
+                        );
+                        const isFull = isSesionCompleta(clase, selectedCalendarDay.dateISO);
+                        const bookedCount = getSesionReservasCount(clase.id, selectedCalendarDay.dateISO);
+                        const maxCap = clase.aforo_maximo || 20;
+
+                        return (
+                          <div
+                            key={clase.id}
+                            className={"p-4 rounded-2xl border transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 shadow-md " + (
+                              isBooked
+                                ? "bg-gradient-to-r from-emerald-500/15 via-[var(--color-bg-card)] to-[var(--color-bg-card)] border-emerald-500/40"
+                                : "bg-[var(--color-bg-card)] border-[var(--color-border)] hover:border-slate-600"
+                            )}
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 uppercase">
+                                  {clase.dia_semana} • {clase.hora_inicio} - {clase.hora_fin}
+                                </span>
+                                <span className={"text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border " + (
+                                  isFull 
+                                    ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
+                                    : "bg-white/5 text-slate-300 border-white/10"
+                                )}>
+                                  {bookedCount} / {maxCap} plazas
+                                </span>
+                              </div>
+
+                              <h3 className="text-sm font-bold font-[family-name:var(--font-heading)] text-white">
+                                {clase.nombre_clase}
+                              </h3>
+                              <p className="text-[11px] text-slate-400">
+                                Profesor/a titular: <strong className="text-white">{clase.profesor}</strong> • {clase.sede === "tejar" ? "Studio 1" : "Studio 2"} • {clase.sala || "Sala Principal"}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                              {isBooked ? (
+                                <div className="flex items-center gap-2">
+                                  <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-xl">
+                                    <Check size={14} />
+                                    <span>Plaza Reservada</span>
+                                  </span>
+                                  <button
+                                    onClick={() => handleTeacherCancelBooking(clase)}
+                                    className="px-2.5 py-1.5 rounded-xl text-xs text-rose-400 hover:text-rose-300 bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 transition-all cursor-pointer"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              ) : isFull ? (
+                                <span className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-400 bg-slate-800 border border-slate-700">
+                                  Agotado
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => handleTeacherOpenClassBooking(clase)}
+                                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 transition-all shadow-md shadow-amber-500/20 active:scale-95 cursor-pointer flex items-center gap-1.5"
+                                >
+                                  <Ticket size={14} />
+                                  <span>Reservar Plaza</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
