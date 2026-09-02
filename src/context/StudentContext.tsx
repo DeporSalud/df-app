@@ -330,10 +330,10 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         return { success: false, error: verification.error || "Código de verificación incorrecto." };
       }
 
-      // Activate student in Supabase
+      // Activate student in Supabase & ensure nfc_token is synced
       const { data: updatedList } = await supabase
         .from("alumnos")
-        .update({ estado: "Activo" })
+        .update({ estado: "Activo", nfc_token: code })
         .ilike("email", cleanEmail)
         .select();
 
