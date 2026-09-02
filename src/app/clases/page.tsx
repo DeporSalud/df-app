@@ -284,9 +284,25 @@ function ClasesContent() {
   }, [selectedSede, selectedDay, currentStudent?.id]);
 
   // Filter Open Classes for the selected calendar day (Always Studio 2)
-  const openClassesForSelectedDay = (openClasses.length > 0 ? openClasses : DEFAULT_STUDIO2_OPEN_CLASSES).filter(
-    c => normalizeDay(c.dia_semana) === normalizeDay(selectedCalendarDay.dayName)
-  );
+  const openClassesForSelectedDay = (openClasses.length > 0 ? openClasses : DEFAULT_STUDIO2_OPEN_CLASSES).filter(c => {
+    if (normalizeDay(c.dia_semana) !== normalizeDay(selectedCalendarDay.dayName)) return false;
+
+    // Thursday Rotativas do not appear until October 2026
+    const isRotativa = 
+      c.nombre_clase?.toUpperCase().includes("ROTAT") || 
+      c.profesor?.toUpperCase().includes("ROTAT") ||
+      (c.tipo_clase || "").toUpperCase().includes("ROTAT");
+
+    if (isRotativa) {
+      const selectedDate = new Date(selectedCalendarDay.dateISO + "T00:00:00");
+      const octoberStart = new Date("2026-10-01T00:00:00");
+      if (selectedDate < octoberStart) {
+        return false;
+      }
+    }
+
+    return true;
+  });
 
   const handleOpenBookingModal = (clase: any) => {
     if (!currentStudent?.id) return;
