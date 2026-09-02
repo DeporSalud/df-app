@@ -160,7 +160,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
         });
         setClasesProfesor(myClases);
 
-        // Open Classes (Exclusively Studio 2 Paseo Castilla)
+        // Open Classes (Exclusively Studio 2 Paseo Castilla, excluding Thursday rotativas)
         let openList = allClases.filter(c => 
           (c.sede === "castilla" || c.sede === "alcorcon") && (
             c.tipo_clase === "Open Class" || 
@@ -175,6 +175,12 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
             c.nombre_clase?.toLowerCase().includes("comercial")
           );
         }
+        openList = openList.filter(c => {
+          const name = (c.nombre_clase || "").toLowerCase();
+          const day = (c.dia_semana || "").toUpperCase();
+          if (day.includes("JUEVES") && (name.includes("rotat") || name.includes("open"))) return false;
+          return true;
+        });
         setAllOpenClasses(openList);
       }
     } catch (e) {
@@ -572,7 +578,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400">
-                  {currentTeacher?.especialidad || "Danza"} • {currentTeacher?.sede === "tejar" ? "Studio 1 Plaza El Tejar" : "Studio 2 Paseo Castilla"}
+                  {currentTeacher?.sede === "tejar" ? "Studio 1 Plaza El Tejar" : currentTeacher?.sede === "castilla" ? "Studio 2 Paseo Castilla" : "Consolidado (Ambas Sedes)"}
                 </p>
               </div>
             </div>
@@ -1089,12 +1095,8 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
 
                 <div className="border-t border-[var(--color-border)] pt-4 space-y-2.5 text-xs text-slate-300">
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Especialidad:</span>
-                    <strong className="text-white">{currentTeacher?.especialidad || "Danza"}</strong>
-                  </div>
-                  <div className="flex justify-between">
                     <span className="text-slate-400">Sede Principal:</span>
-                    <strong className="text-white">{currentTeacher?.sede === "tejar" ? "Studio 1 Plaza El Tejar" : "Studio 2 Paseo Castilla"}</strong>
+                    <strong className="text-white">{currentTeacher?.sede === "tejar" ? "Studio 1 Plaza El Tejar" : currentTeacher?.sede === "castilla" ? "Studio 2 Paseo Castilla" : "Consolidado (Ambas Sedes)"}</strong>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">Email Corporativo:</span>

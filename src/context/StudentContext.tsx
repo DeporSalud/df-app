@@ -43,7 +43,8 @@ export const PROFESORES_LIST: Teacher[] = [
   { id: "1008", name: "DARÍO HUMBERTO", email: "dario.humberto@dancefactory.es", pin: "1008", especialidad: "Urbano & Acrobacia", sede: "tejar" },
   { id: "1009", name: "NEREA OLIVARES", email: "nerea.olivares@dancefactory.es", pin: "1009", especialidad: "Danza Infantil & Juvenil", sede: "tejar" },
   { id: "1010", name: "ALEJANDRO ROVINA", email: "alejandro.rovina@dancefactory.es", pin: "1010", especialidad: "Heels & Comercial", sede: "castilla" },
-  { id: "1011", name: "NIL BARBERÁ", email: "nil.barbera@dancefactory.es", pin: "1011", especialidad: "Popping & Locking", sede: "castilla" },
+  { id: "1011", name: "NIL BARBERÁ", email: "nil.barbera@dancefactory.es", pin: "1011", especialidad: "Dirección", sede: "castilla" },
+  { id: "9998", name: "RUTH DOMÍNGUEZ", email: "ruth.dominguez@dancefactory.es", pin: "2026", especialidad: "Dirección", sede: "consolidado", isAdmin: true },
   { id: "9999", name: "ADMINISTRADOR MASTER", email: "admin@dancefactory.es", pin: "9999", especialidad: "Dirección", sede: "consolidado", isAdmin: true }
 ];
 

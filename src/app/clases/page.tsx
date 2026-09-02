@@ -85,18 +85,6 @@ const DEFAULT_STUDIO2_OPEN_CLASSES = [
     tipo_clase: "Open Class"
   },
   {
-    id: "oc_jueves_1",
-    nombre_clase: "OPEN CLASS: Jazz Funk & Lírico",
-    profesor: "Eva Leiva",
-    dia_semana: "JUEVES",
-    hora_inicio: "19:00",
-    hora_fin: "20:30",
-    sede: "castilla",
-    sala: "Sala 1",
-    aforo_maximo: 20,
-    tipo_clase: "Open Class"
-  },
-  {
     id: "oc_viernes_1",
     nombre_clase: "OPEN CLASS: Contemporáneo Fusion",
     profesor: "Lucía Zamorano",
@@ -772,19 +760,19 @@ function ClasesContent() {
         {/* TAB 2: OPEN CLASS CON SELECTOR DE CALENDARIO ESPECÍFICO */}
         {activeTab === "openclass" && (
           <main className="p-6 space-y-5">
-            {/* Banner Informativo Exclusividad Studio 2 */}
-            <div className="flex items-center justify-between p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 shadow-md">
+            {/* Banner Informativo Exclusividad Studio 2 & Fecha de Inicio */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 shadow-md gap-2">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0">
                   <MapPin size={16} />
                 </div>
                 <div>
-                  <strong className="block text-white font-bold text-xs">Sede Oficial Open Classes: Studio 2</strong>
-                  <span className="text-[11px] text-slate-300">Paseo de Castilla, 41 (Alcorcón)</span>
+                  <strong className="block text-white font-bold text-xs">Sede Oficial Open Classes: Studio 2 (Paseo de Castilla, 41)</strong>
+                  <span className="text-[11px] text-amber-200/90 font-medium">📅 Temporada 2026: Reservas activas a partir del 9 de Septiembre</span>
                 </div>
               </div>
               <span className="text-[10px] font-bold uppercase bg-amber-500/20 text-amber-300 px-2.5 py-1 rounded-full border border-amber-500/30 shrink-0">
-                Solo en Studio 2
+                Desde 9 Sep
               </span>
             </div>
 

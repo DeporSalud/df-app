@@ -273,8 +273,8 @@ export default function LoginPage() {
   }, [selectedRole, selectedTeacher, teacherLockout.isLocked, isSubmitting, teacherPin]);
 
   const filteredTeachers = PROFESORES_LIST.filter(t => 
-    t.name.toLowerCase().includes(teacherSearch.toLowerCase()) || 
-    t.especialidad.toLowerCase().includes(teacherSearch.toLowerCase())
+    t.name.toLowerCase().includes(teacherSearch.toLowerCase()) ||
+    t.email.toLowerCase().includes(teacherSearch.toLowerCase())
   );
 
   if (otpModalEmail) {
@@ -465,7 +465,7 @@ export default function LoginPage() {
                       type="text"
                       value={teacherSearch}
                       onChange={(e) => setTeacherSearch(e.target.value)}
-                      placeholder="Buscar profesor o especialidad..."
+                      placeholder="Buscar profesor..."
                       className="w-full pl-9 pr-3 py-2 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-white text-xs focus:outline-none focus:border-[var(--color-secondary)] transition-colors placeholder:text-slate-500"
                     />
                   </div>
@@ -506,7 +506,7 @@ export default function LoginPage() {
                                 {teacher.name}
                               </h4>
                               <p className="text-[10px] text-slate-400">
-                                {teacher.especialidad} • {teacher.sede === "tejar" ? "Studio 1 El Tejar" : teacher.sede === "castilla" ? "Studio 2 Castilla" : "Consolidado"}
+                                {teacher.sede === "tejar" ? "Studio 1 Plaza El Tejar" : teacher.sede === "castilla" ? "Studio 2 Paseo Castilla" : "Consolidado (Ambas sedes)"}
                               </p>
                             </div>
                           </div>

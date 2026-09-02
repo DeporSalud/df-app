@@ -96,12 +96,8 @@ export default function PerfilPage() {
 
               <div className="border-t border-[var(--color-border)] pt-4 space-y-3 text-xs">
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-400">Especialidad Principal:</span>
-                  <strong className="text-white">{currentTeacher?.especialidad || "Danza"}</strong>
-                </div>
-                <div className="flex justify-between items-center">
                   <span className="text-slate-400">Sede Habitual:</span>
-                  <strong className="text-white">{currentTeacher?.sede === "tejar" ? "Studio 1 Plaza El Tejar" : "Studio 2 Paseo Castilla"}</strong>
+                  <strong className="text-white">{currentTeacher?.sede === "tejar" ? "Studio 1 Plaza El Tejar" : currentTeacher?.sede === "castilla" ? "Studio 2 Paseo Castilla" : "Consolidado (Ambas Sedes)"}</strong>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-slate-400">Email Corporativo:</span>
