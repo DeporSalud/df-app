@@ -160,27 +160,25 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
         });
         setClasesProfesor(myClases);
 
-        // Open Classes (Exclusively Studio 2 Paseo Castilla, excluding Thursday rotativas)
+        // Open Classes & Formaciones (Studio 2 Paseo Castilla)
         let openList = allClases.filter(c => 
           (c.sede === "castilla" || c.sede === "alcorcon") && (
             c.tipo_clase === "Open Class" || 
             c.nombre_clase?.toLowerCase().includes("open") ||
-            c.nombre_clase?.toLowerCase().includes("comercial")
+            c.nombre_clase?.toLowerCase().includes("comercial") ||
+            c.nombre_clase?.toLowerCase().includes("formaci") ||
+            c.nombre_clase?.toLowerCase().includes("rotat")
           )
         );
         if (openList.length === 0) {
           openList = allClases.filter(c => 
             c.tipo_clase === "Open Class" || 
             c.nombre_clase?.toLowerCase().includes("open") ||
-            c.nombre_clase?.toLowerCase().includes("comercial")
+            c.nombre_clase?.toLowerCase().includes("comercial") ||
+            c.nombre_clase?.toLowerCase().includes("formaci") ||
+            c.nombre_clase?.toLowerCase().includes("rotat")
           );
         }
-        openList = openList.filter(c => {
-          const name = (c.nombre_clase || "").toLowerCase();
-          const day = (c.dia_semana || "").toUpperCase();
-          if (day.includes("JUEVES") && (name.includes("rotat") || name.includes("open"))) return false;
-          return true;
-        });
         setAllOpenClasses(openList);
       }
     } catch (e) {
@@ -374,6 +372,22 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   // 4. Booking Open Class as a Teacher
   const handleTeacherOpenClassBooking = async (clase: any) => {
     if (!teacherStudent?.id) return;
+
+    const isRotativa = 
+      clase.nombre_clase?.toUpperCase().includes("ROTAT") || 
+      clase.profesor?.toUpperCase().includes("ROTAT") ||
+      (clase.tipo_clase || "").toUpperCase().includes("ROTAT");
+
+    if (isRotativa) {
+      setModal({
+        isOpen: true,
+        title: "ℹ️ Formación Rotativa",
+        message: "Las clases de Formación Rotativa no se pueden reservar desde el portal. Para inscribirte, por favor consulta directamente en recepción.",
+        type: "info",
+        confirmText: "Entendido"
+      });
+      return;
+    }
 
     if (isSesionCompleta(clase, selectedCalendarDay.dateISO)) {
       setModal({
@@ -949,32 +963,56 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                             </div>
 
                             <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-                              {isBooked ? (
-                                <div className="flex items-center gap-2">
-                                  <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-xl">
-                                    <Check size={14} />
-                                    <span>Plaza Reservada</span>
-                                  </span>
+                              {(() => {
+                                const isRotativa = 
+                                  clase.nombre_clase?.toUpperCase().includes("ROTAT") || 
+                                  clase.profesor?.toUpperCase().includes("ROTAT") ||
+                                  (clase.tipo_clase || "").toUpperCase().includes("ROTAT");
+
+                                if (isRotativa) {
+                                  return (
+                                    <span className="px-3.5 py-2 rounded-xl text-xs font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 flex items-center gap-1.5 shadow-sm">
+                                      <Lock size={13} className="text-amber-400" />
+                                      <span>Inscripción en Recepción</span>
+                                    </span>
+                                  );
+                                }
+
+                                if (isBooked) {
+                                  return (
+                                    <div className="flex items-center gap-2">
+                                      <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-xl">
+                                        <Check size={14} />
+                                        <span>Plaza Reservada</span>
+                                      </span>
+                                      <button
+                                        onClick={() => handleTeacherCancelBooking(clase)}
+                                        className="px-2.5 py-1.5 rounded-xl text-xs text-rose-400 hover:text-rose-300 bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 transition-all cursor-pointer"
+                                      >
+                                        Cancelar
+                                      </button>
+                                    </div>
+                                  );
+                                }
+
+                                if (isFull) {
+                                  return (
+                                    <span className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-400 bg-slate-800 border border-slate-700">
+                                      Agotado
+                                    </span>
+                                  );
+                                }
+
+                                return (
                                   <button
-                                    onClick={() => handleTeacherCancelBooking(clase)}
-                                    className="px-2.5 py-1.5 rounded-xl text-xs text-rose-400 hover:text-rose-300 bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 transition-all cursor-pointer"
+                                    onClick={() => handleTeacherOpenClassBooking(clase)}
+                                    className="px-4 py-2 rounded-xl text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 transition-all shadow-md shadow-amber-500/20 active:scale-95 cursor-pointer flex items-center gap-1.5"
                                   >
-                                    Cancelar
+                                    <Ticket size={14} />
+                                    <span>Reservar Plaza</span>
                                   </button>
-                                </div>
-                              ) : isFull ? (
-                                <span className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-400 bg-slate-800 border border-slate-700">
-                                  Agotado
-                                </span>
-                              ) : (
-                                <button
-                                  onClick={() => handleTeacherOpenClassBooking(clase)}
-                                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 transition-all shadow-md shadow-amber-500/20 active:scale-95 cursor-pointer flex items-center gap-1.5"
-                                >
-                                  <Ticket size={14} />
-                                  <span>Reservar Plaza</span>
-                                </button>
-                              )}
+                                );
+                              })()}
                             </div>
                           </div>
                         );

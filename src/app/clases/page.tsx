@@ -25,7 +25,8 @@ import {
   Landmark,
   ShieldCheck,
   Smartphone,
-  Loader2
+  Loader2,
+  Lock
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase/client";
@@ -79,6 +80,18 @@ const DEFAULT_STUDIO2_OPEN_CLASSES = [
     dia_semana: "MIÉRCOLES",
     hora_inicio: "19:00",
     hora_fin: "20:30",
+    sede: "castilla",
+    sala: "Sala 1",
+    aforo_maximo: 20,
+    tipo_clase: "Open Class"
+  },
+  {
+    id: "oc_jueves_1",
+    nombre_clase: "FORMACIÓN ROTATIVA",
+    profesor: "Formación Rotativa",
+    dia_semana: "JUEVES",
+    hora_inicio: "20:30",
+    hora_fin: "22:00",
     sede: "castilla",
     sala: "Sala 1",
     aforo_maximo: 20,
@@ -277,6 +290,22 @@ function ClasesContent() {
 
   const handleOpenBookingModal = (clase: any) => {
     if (!currentStudent?.id) return;
+
+    const isRotativa = 
+      clase.nombre_clase?.toUpperCase().includes("ROTAT") || 
+      clase.profesor?.toUpperCase().includes("ROTAT") ||
+      (clase.tipo_clase || "").toUpperCase().includes("ROTAT");
+
+    if (isRotativa) {
+      setModal({
+        isOpen: true,
+        title: "ℹ️ Formación Rotativa",
+        message: "Las clases de Formación Rotativa no se pueden reservar desde la app.\n\nPara consultar disponibilidad o reservar tu plaza, dirígete a recepción de la escuela o contacta por WhatsApp.",
+        type: "info",
+        confirmText: "Entendido"
+      });
+      return;
+    }
 
     // Check capacity first
     if (isSesionCompleta(clase, selectedCalendarDay.dateISO)) {
@@ -846,7 +875,11 @@ function ClasesContent() {
                     selectedCalendarDay.dateISO
                   );
                   const isFull = isSesionCompleta(clase, selectedCalendarDay.dateISO);
-                  const isFormacion = clase.nombre_clase.toUpperCase().includes("FORMACI");
+                  const isRotativa = 
+                    clase.nombre_clase?.toUpperCase().includes("ROTAT") || 
+                    clase.profesor?.toUpperCase().includes("ROTAT") ||
+                    (clase.tipo_clase || "").toUpperCase().includes("ROTAT");
+                  const isFormacion = clase.nombre_clase?.toUpperCase().includes("FORMACI");
 
                   return (
                     <div 
@@ -854,6 +887,8 @@ function ClasesContent() {
                       className={`rounded-3xl border p-5 relative overflow-hidden transition-all shadow-xl ${
                         isReservedForThisDate 
                           ? "bg-gradient-to-r from-emerald-500/15 via-[var(--color-bg-card)] to-[var(--color-bg-card)] border-emerald-500/60" 
+                          : isRotativa
+                          ? "bg-gradient-to-r from-purple-950/30 via-[var(--color-bg-card)] to-[var(--color-bg-card)] border-purple-500/40"
                           : isFormacion
                           ? "bg-gradient-to-r from-purple-500/10 to-[var(--color-bg-card)] border-purple-500/30"
                           : "bg-[var(--color-bg-card)] border-[var(--color-border)] hover:border-amber-400/50"
@@ -862,10 +897,17 @@ function ClasesContent() {
                       <div className="flex justify-between items-start gap-2 mb-2">
                         <div>
                           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/15 px-2.5 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
-                              <Flame size={12} />
-                              Open Class
-                            </span>
+                            {isRotativa ? (
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-300 bg-purple-500/20 px-2.5 py-0.5 rounded-full border border-purple-500/40 flex items-center gap-1">
+                                <Flame size={12} />
+                                Formación Rotativa
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/15 px-2.5 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
+                                <Flame size={12} />
+                                Open Class
+                              </span>
+                            )}
                             <span className="text-[10px] font-mono font-bold text-slate-300 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">
                               📅 {selectedCalendarDay.dayShort} {selectedCalendarDay.dayNumber} {selectedCalendarDay.monthShort}
                             </span>
@@ -883,12 +925,17 @@ function ClasesContent() {
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between mt-4 pt-3 border-t border-[var(--color-border)]">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-4 pt-3 border-t border-[var(--color-border)]">
                         <span className="text-xs text-[var(--color-text-secondary)]">
                           Plazas: <strong className="text-white">{clase.aforo_maximo || 20} aforo</strong>
                         </span>
 
-                        {isReservedForThisDate ? (
+                        {isRotativa ? (
+                          <span className="text-xs font-bold text-amber-300 bg-amber-500/15 px-3.5 py-2 rounded-xl border border-amber-500/30 flex items-center gap-1.5 shadow-sm">
+                            <Lock size={14} className="text-amber-400 shrink-0" />
+                            <span>Inscripción en Recepción (No reservable en app)</span>
+                          </span>
+                        ) : isReservedForThisDate ? (
                           <span className="text-xs font-bold text-emerald-400 bg-emerald-500/15 px-3.5 py-1.5 rounded-xl border border-emerald-500/30 flex items-center gap-1.5">
                             <CheckCircle2 size={15} />
                             <span>Plaza Reservada</span>
