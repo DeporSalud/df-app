@@ -505,9 +505,6 @@ export default function LoginPage() {
                               <h4 className="text-xs font-bold text-white group-hover:text-[var(--color-secondary)] transition-colors">
                                 {teacher.name}
                               </h4>
-                              <p className="text-[10px] text-slate-400">
-                                {teacher.sede === "tejar" ? "Studio 1 Plaza El Tejar" : teacher.sede === "castilla" ? "Studio 2 Paseo Castilla" : "Consolidado (Ambas sedes)"}
-                              </p>
                             </div>
                           </div>
 
