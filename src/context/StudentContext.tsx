@@ -19,6 +19,7 @@ export interface Student {
   fecha_nacimiento?: string;
   matricula_pagada?: boolean;
   matricula_fecha?: string;
+  bono_caducidad?: string;
 }
 
 export interface Teacher {
@@ -110,7 +111,8 @@ const FALLBACK_STUDENTS: Student[] = [
     nfc_token: "4022",
     fecha_nacimiento: "2002-08-19",
     matricula_pagada: true,
-    matricula_fecha: "2026-09-02"
+    matricula_fecha: "2026-09-02",
+    bono_caducidad: "2026-10-02T23:59:59.000Z"
   },
   {
     id: "demo_carlos",
@@ -124,7 +126,8 @@ const FALLBACK_STUDENTS: Student[] = [
     dni: "52345678B",
     nfc_token: "5119",
     fecha_nacimiento: "1998-11-05",
-    matricula_pagada: false
+    matricula_pagada: false,
+    bono_caducidad: "2026-09-10T23:59:59.000Z"
   }
 ];
 

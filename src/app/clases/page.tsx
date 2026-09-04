@@ -26,7 +26,8 @@ import {
   ShieldCheck,
   Smartphone,
   Loader2,
-  Lock
+  Lock,
+  AlertTriangle
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase/client";
@@ -160,6 +161,23 @@ function ClasesContent() {
   const [selectedSede, setSelectedSede] = useState<string>("tejar");
   const [selectedDay, setSelectedDay] = useState<string>("LUNES");
   const [isLoading, setIsLoading] = useState(true);
+
+  // Cálculo de caducidad de bono para avisos en Open Class
+  const hasRemainingClasses = typeof currentStudent?.clases_restantes === "number" && currentStudent.clases_restantes > 0;
+  let expirationDate: Date | null = null;
+  if (currentStudent?.bono_caducidad) {
+    expirationDate = new Date(currentStudent.bono_caducidad);
+  } else if (hasRemainingClasses) {
+    const base = (currentStudent as any)?.creado_en ? new Date((currentStudent as any).creado_en) : new Date("2026-09-04T00:00:00Z");
+    expirationDate = new Date(base);
+    expirationDate.setMonth(expirationDate.getMonth() + 1);
+  }
+  const daysLeft = expirationDate ? Math.ceil((expirationDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null;
+  const isExpiringSoon = daysLeft !== null && daysLeft <= 7 && daysLeft > 0 && hasRemainingClasses;
+  const formattedExpiration = expirationDate ? expirationDate.toLocaleDateString("es-ES", {
+    day: "numeric",
+    month: "short"
+  }) : null;
 
   const diasSemana = [
     { key: "LUNES", dia: "LUN" },
@@ -835,14 +853,32 @@ function ClasesContent() {
 
             {/* SELECTOR DE FECHAS EN CALENDARIO (Próximos días de la academia) */}
             <div className="space-y-2">
+              {/* Banner de urgencia si caduca en ≤ 7 días */}
+              {isExpiringSoon && (
+                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/40 flex items-center gap-2.5 text-xs text-amber-200">
+                  <AlertTriangle size={16} className="text-amber-400 shrink-0 animate-pulse" />
+                  <div className="flex-1 leading-tight">
+                    <strong>¡Tu bono caduca en {daysLeft} {daysLeft === 1 ? "día" : "días"}!</strong> (Vence el {formattedExpiration}). Aprovecha para reservar tus {currentStudent?.clases_restantes} clases pendientes.
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
                   <CalendarDays size={14} className="text-amber-400" />
                   <span>Selecciona el Día del Calendario</span>
                 </span>
-                <span className="text-[11px] font-mono font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 rounded-full">
-                  Saldo: {currentStudent?.clases_restantes || 0} clases
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {isExpiringSoon && (
+                    <span className="text-[10px] font-bold text-amber-300 bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <Clock size={10} />
+                      <span>{daysLeft}d restantes</span>
+                    </span>
+                  )}
+                  <span className="text-[11px] font-mono font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 rounded-full">
+                    Saldo: {currentStudent?.clases_restantes || 0} clases
+                  </span>
+                </div>
               </div>
 
               <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none pt-1">
@@ -1091,7 +1127,14 @@ function ClasesContent() {
 
             {/* Balance check */}
             <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-200 flex items-center justify-between">
-              <span>Saldo de bono disponible:</span>
+              <div>
+                <span>Saldo de bono disponible:</span>
+                {formattedExpiration && (
+                  <p className="text-[10px] text-amber-300/80 mt-0.5">
+                    Válido hasta: <strong>{formattedExpiration}</strong> {daysLeft !== null && `(quedan ${daysLeft}d)`}
+                  </p>
+                )}
+              </div>
               <strong className="font-mono text-sm text-white">{currentStudent?.clases_restantes || 0} clases</strong>
             </div>
 

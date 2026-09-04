@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
-import { Calendar, User, QrCode, CreditCard, ShieldCheck, MapPin, Sparkles, LogOut, BookmarkCheck, Ticket, Flame } from "lucide-react";
+import { Calendar, User, QrCode, CreditCard, ShieldCheck, MapPin, Sparkles, LogOut, BookmarkCheck, Ticket, Flame, AlertTriangle, Clock, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useStudent } from "@/context/StudentContext";
 import StudentBottomNav from "@/components/StudentBottomNav";
@@ -32,6 +32,30 @@ export default function AppHome() {
   const plan = (currentStudent?.plan_activo || "").toLowerCase();
   const isSinPlan = plan.includes("sin plan") || plan.includes("pendiente") || !currentStudent?.plan_activo;
   const isBono = plan.includes("bono") || (typeof currentStudent?.clases_restantes === "number" && currentStudent.clases_restantes > 0);
+
+  // Cálculo de caducidad del bono (1 mes / 30 días)
+  const classesCount = currentStudent?.clases_restantes ?? 0;
+  const hasRemainingClasses = typeof currentStudent?.clases_restantes === "number" && currentStudent.clases_restantes > 0;
+
+  let expirationDate: Date | null = null;
+  if (currentStudent?.bono_caducidad) {
+    expirationDate = new Date(currentStudent.bono_caducidad);
+  } else if (isBono && hasRemainingClasses) {
+    const base = (currentStudent as any)?.creado_en ? new Date((currentStudent as any).creado_en) : new Date("2026-09-04T00:00:00Z");
+    expirationDate = new Date(base);
+    expirationDate.setMonth(expirationDate.getMonth() + 1);
+  }
+
+  const now = new Date();
+  const daysLeft = expirationDate ? Math.ceil((expirationDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : null;
+  const isExpiringSoon = daysLeft !== null && daysLeft <= 7 && daysLeft > 0 && hasRemainingClasses;
+  const isExpired = daysLeft !== null && daysLeft <= 0 && hasRemainingClasses;
+
+  const formattedExpiration = expirationDate ? expirationDate.toLocaleDateString("es-ES", {
+    day: "numeric",
+    month: "long",
+    year: "numeric"
+  }) : null;
 
   return (
     <div className="flex flex-col flex-1 w-full bg-[var(--color-bg)] overflow-x-hidden">
@@ -65,6 +89,61 @@ export default function AppHome() {
 
         {/* Main Content */}
         <main className="p-6 space-y-6">
+
+          {/* ALERTA URGENTE: Bono próximo a caducar (≤ 7 días) con clases pendientes */}
+          {isExpiringSoon && (
+            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent border-2 border-amber-500/60 p-4 shadow-xl shadow-amber-500/10 animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="flex items-start gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0 text-amber-400 shadow-inner">
+                  <AlertTriangle size={20} className="animate-pulse" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded-full bg-amber-500 text-slate-950">
+                      ¡CADUCA EN {daysLeft} {daysLeft === 1 ? "DÍA" : "DÍAS"}!
+                    </span>
+                  </div>
+                  <h3 className="text-sm font-bold text-white mt-1">
+                    Te quedan {classesCount} {classesCount === 1 ? "clase pendiente" : "clases pendientes"}
+                  </h3>
+                  <p className="text-xs text-amber-200/90 mt-1 leading-relaxed">
+                    Tu bono caduca el <strong>{formattedExpiration}</strong>. ¡No pierdas tus clases y reserva tu plaza en Studio 2 antes de la fecha límite!
+                  </p>
+                  <Link
+                    href="/clases?tab=openclass"
+                    className="inline-flex items-center gap-1.5 mt-3 px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold transition-all shadow-md shadow-amber-500/25 active:scale-95 cursor-pointer"
+                  >
+                    <span>Reservar Open Class Ahora</span>
+                    <ArrowRight size={14} />
+                  </Link>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ALERTA: Bono ya caducado con clases pendientes */}
+          {isExpired && (
+            <div className="rounded-2xl bg-red-500/10 border border-red-500/30 p-4 shadow-lg animate-in fade-in duration-300">
+              <div className="flex items-start gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/40 flex items-center justify-center shrink-0 text-red-400">
+                  <Clock size={20} />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-sm font-bold text-white">Tu bono de clases ha caducado</h3>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                    La validez de tu bono finalizó el {formattedExpiration}. Puedes adquirir un nuevo bono para continuar disfrutando de las clases.
+                  </p>
+                  <Link
+                    href="/clases?tab=bonos"
+                    className="inline-flex items-center gap-1.5 mt-2.5 px-3 py-1.5 rounded-xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-bold transition-all shadow-md active:scale-95"
+                  >
+                    <span>Renovar Bono</span>
+                    <ArrowRight size={14} />
+                  </Link>
+                </div>
+              </div>
+            </div>
+          )}
           
           {/* Tarjeta de Estado del Alumno (Bono Activo & Clases Restantes) */}
           <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[var(--color-bg-card)] via-[#11192e] to-[var(--color-bg-hover)] border border-[var(--color-primary)]/40 p-5 shadow-xl">
@@ -117,6 +196,19 @@ export default function AppHome() {
                 </Link>
               )}
             </div>
+
+            {/* Validez y Caducidad del Bono */}
+            {isBono && formattedExpiration && (
+              <div className="flex items-center justify-between text-xs pt-3 mt-3 border-t border-white/10">
+                <span className="text-[var(--color-text-secondary)] flex items-center gap-1.5">
+                  <Clock size={13} className={isExpiringSoon ? "text-amber-400" : "text-slate-400"} />
+                  Validez del bono:
+                </span>
+                <span className={`font-semibold ${isExpiringSoon ? "text-amber-400" : isExpired ? "text-red-400" : "text-slate-300"}`}>
+                  Hasta {formattedExpiration} {daysLeft !== null && daysLeft > 0 && `(en ${daysLeft}d)`}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* QR Carnet Digital para Acceso */}

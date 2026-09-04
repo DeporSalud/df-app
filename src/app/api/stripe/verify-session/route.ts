@@ -98,13 +98,31 @@ export async function POST(req: NextRequest) {
         const currentBalance = typeof student.clases_restantes === "number" ? student.clases_restantes : 0;
         updatedBalance = isUnlimited ? 999 : currentBalance + count;
 
-        await supabase
+        // Calcular fecha de caducidad a 1 mes natural vista
+        const expDate = new Date();
+        expDate.setMonth(expDate.getMonth() + 1);
+        const bonoCaducidadISO = expDate.toISOString();
+
+        // Actualizar en Supabase con tolerancia a fallos si la columna no existe aún
+        const { error: updateErr } = await supabase
           .from("alumnos")
           .update({
             plan_activo: bonoName || "Bono de Clases",
             clases_restantes: updatedBalance,
+            bono_caducidad: bonoCaducidadISO,
           })
           .eq("id", studentId);
+
+        if (updateErr) {
+          console.warn("[Stripe Verify] Fallback sin bono_caducidad:", updateErr.message);
+          await supabase
+            .from("alumnos")
+            .update({
+              plan_activo: bonoName || "Bono de Clases",
+              clases_restantes: updatedBalance,
+            })
+            .eq("id", studentId);
+        }
       }
     }
 
@@ -114,6 +132,7 @@ export async function POST(req: NextRequest) {
       bonoName: bonoName || "Bono de Clases",
       clasesCount: count,
       updatedBalance,
+      bonoCaducidad: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       totalAmount: totalAmount || "0.00",
       customerEmail: session.customer_details?.email || studentEmail,
       receiptUrl: (session as any).receipt_url || null,
