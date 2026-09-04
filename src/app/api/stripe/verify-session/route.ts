@@ -44,6 +44,48 @@ export async function POST(req: NextRequest) {
 
     let updatedBalance = count;
 
+    // 1. Check idempotency on Stripe PaymentIntent to prevent duplicate additions
+    const paymentIntentId = typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : (session.payment_intent as any)?.id;
+
+    if (paymentIntentId) {
+      try {
+        const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+        if (pi.metadata?.processed === "true") {
+          // Already processed! Return current balance safely without re-adding
+          let currentBalance = 0;
+          if (studentId) {
+            const { data: currentDbStudent } = await supabase
+              .from("alumnos")
+              .select("clases_restantes")
+              .eq("id", studentId)
+              .maybeSingle();
+            currentBalance = currentDbStudent?.clases_restantes ?? 0;
+          }
+
+          return NextResponse.json({
+            success: true,
+            alreadyProcessed: true,
+            paid: true,
+            bonoName: bonoName || "Bono de Clases",
+            clasesCount: count,
+            updatedBalance: currentBalance,
+            totalAmount: totalAmount || "0.00",
+            customerEmail: session.customer_details?.email || studentEmail,
+            receiptUrl: (session as any).receipt_url || null,
+          });
+        }
+
+        // Mark as processed in Stripe before updating database
+        await stripe.paymentIntents.update(paymentIntentId, {
+          metadata: { processed: "true", studentId: studentId || "", bonoId: bonoId || "" }
+        });
+      } catch (stripeErr) {
+        console.warn("[Stripe Verify] Could not check/update PaymentIntent metadata:", stripeErr);
+      }
+    }
+
     if (studentId) {
       // Get current student balance
       const { data: student } = await supabase

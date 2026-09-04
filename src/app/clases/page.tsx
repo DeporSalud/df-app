@@ -414,6 +414,7 @@ function ClasesContent() {
   const [paymentMethodTab, setPaymentMethodTab] = useState<"stripe" | "transferencia" | "recepcion">("stripe");
   const [isStripeLoading, setIsStripeLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const verifiedSessionIdRef = useState<{ current: string | null }>({ current: null })[0];
 
   // Handle Stripe Payment Return
   useEffect(() => {
@@ -423,6 +424,17 @@ function ClasesContent() {
     const sessionId = params.get("session_id");
 
     if (payment === "success" && sessionId) {
+      if (verifiedSessionIdRef.current === sessionId) return;
+      verifiedSessionIdRef.current = sessionId;
+
+      // Immediately clean URL parameters to prevent re-execution on re-renders
+      try {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete("payment");
+        cleanUrl.searchParams.delete("session_id");
+        window.history.replaceState({}, "", cleanUrl.pathname + (cleanUrl.search || ""));
+      } catch (e) {}
+
       const verifyStripePayment = async () => {
         try {
           const res = await fetch("/api/stripe/verify-session", {
