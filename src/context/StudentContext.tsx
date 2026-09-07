@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { generateAndSendOtp, verifyOtpCode } from "@/lib/otpService";
+import { isRegularClassStudent, hasPaidSeasonMatricula } from "@/lib/matriculaService";
 
 export interface Student {
   id: string;
@@ -20,6 +21,8 @@ export interface Student {
   matricula_pagada?: boolean;
   matricula_fecha?: string;
   bono_caducidad?: string;
+  es_regular?: boolean;
+  alumnos_clases_ids?: string[];
 }
 
 export interface Teacher {
@@ -131,11 +134,17 @@ const FALLBACK_STUDENTS: Student[] = [
   }
 ];
 
+const INITIAL_STUDENTS: Student[] = FALLBACK_STUDENTS.map(s => ({
+  ...s,
+  es_regular: isRegularClassStudent(s),
+  matricula_pagada: Boolean(s.matricula_pagada || hasPaidSeasonMatricula(s))
+}));
+
 const StudentContext = createContext<StudentContextType | undefined>(undefined);
 
 export function StudentProvider({ children }: { children: ReactNode }) {
   const [userRole, setUserRoleState] = useState<UserRole>("alumno");
-  const [students, setStudents] = useState<Student[]>(FALLBACK_STUDENTS);
+  const [students, setStudents] = useState<Student[]>(INITIAL_STUDENTS);
   const [currentStudentId, setCurrentStudentIdState] = useState<string>("demo_fran");
   const [currentTeacherId, setCurrentTeacherIdState] = useState<string>("1001");
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -152,15 +161,31 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         .from("alumnos")
         .select("*")
         .order("nombre_completo", { ascending: true });
+
+      const { data: enrollments } = await supabase
+        .from("alumnos_clases")
+        .select("alumno_id, clase_id");
+
+      const enrollmentsByStudent: Record<string, string[]> = {};
+      if (enrollments && enrollments.length > 0) {
+        for (const e of enrollments) {
+          if (!enrollmentsByStudent[e.alumno_id]) {
+            enrollmentsByStudent[e.alumno_id] = [];
+          }
+          enrollmentsByStudent[e.alumno_id].push(e.clase_id);
+        }
+      }
       
       if (!error && data && data.length > 0) {
         const enriched = data.map((s: any) => {
-          const hasClasses = typeof s.clases_restantes === "number" && s.clases_restantes > 0;
-          const hasActivePlan = s.plan_activo && s.plan_activo !== "Sin Plan Activo" && !s.plan_activo.startsWith("Pendiente:");
-          const isPaid = Boolean(s.matricula_pagada || hasClasses || hasActivePlan);
+          const assignedIds = enrollmentsByStudent[s.id] || [];
+          const isRegular = isRegularClassStudent(s, { assignedClassIds: assignedIds });
+          const isPaid = Boolean(s.matricula_pagada || hasPaidSeasonMatricula(s));
 
           return {
             ...s,
+            es_regular: isRegular,
+            alumnos_clases_ids: assignedIds,
             matricula_pagada: isPaid
           };
         });
@@ -185,6 +210,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       }
     } catch (err) {
       console.warn("Supabase fetch failed, using fallback students list:", err);
+      setStudents(INITIAL_STUDENTS);
     } finally {
       setIsLoading(false);
     }
@@ -202,6 +228,22 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       if (savedTeacher) setCurrentTeacherIdState(savedTeacher);
     }
     fetchStudents();
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        fetchStudents();
+      }
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", handleVisibilityOrFocus);
+      document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", handleVisibilityOrFocus);
+        document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+      }
+    };
   }, []);
 
   const setUserRole = (role: UserRole) => {

@@ -86,43 +86,67 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    let student: any = null;
+    let targetStudentId = studentId;
+
     if (studentId) {
-      // Get current student balance
-      const { data: student } = await supabase
+      const { data } = await supabase
         .from("alumnos")
         .select("id, clases_restantes, plan_activo")
         .eq("id", studentId)
-        .single();
+        .maybeSingle();
+      student = data;
+    }
 
-      if (student) {
-        const currentBalance = typeof student.clases_restantes === "number" ? student.clases_restantes : 0;
-        updatedBalance = isUnlimited ? 999 : currentBalance + count;
+    const resolvedEmail = studentEmail || session.customer_details?.email;
+    if (!student && resolvedEmail) {
+      const { data } = await supabase
+        .from("alumnos")
+        .select("id, clases_restantes, plan_activo")
+        .ilike("email", resolvedEmail.trim().toLowerCase())
+        .maybeSingle();
+      student = data;
+      if (student) targetStudentId = student.id;
+    }
 
-        // Calcular fecha de caducidad a 1 mes natural vista
-        const expDate = new Date();
-        expDate.setMonth(expDate.getMonth() + 1);
-        const bonoCaducidadISO = expDate.toISOString();
+    if (student && targetStudentId) {
+      const currentBalance = typeof student.clases_restantes === "number" ? student.clases_restantes : 0;
+      updatedBalance = isUnlimited ? 999 : currentBalance + count;
 
-        // Actualizar en Supabase con tolerancia a fallos si la columna no existe aún
-        const { error: updateErr } = await supabase
-          .from("alumnos")
-          .update({
-            plan_activo: bonoName || "Bono de Clases",
-            clases_restantes: updatedBalance,
-            bono_caducidad: bonoCaducidadISO,
-          })
-          .eq("id", studentId);
+      // Calcular fecha de caducidad a 1 mes natural vista
+      const expDate = new Date();
+      expDate.setMonth(expDate.getMonth() + 1);
+      const bonoCaducidadISO = expDate.toISOString();
 
-        if (updateErr) {
-          console.warn("[Stripe Verify] Fallback sin bono_caducidad:", updateErr.message);
-          await supabase
-            .from("alumnos")
-            .update({
-              plan_activo: bonoName || "Bono de Clases",
-              clases_restantes: updatedBalance,
-            })
-            .eq("id", studentId);
+      // Actualizar en Supabase con tolerancia a fallos si la columna no existe aún
+      const updatePayload: Record<string, any> = {
+        plan_activo: bonoName || "Bono de Clases",
+        clases_restantes: updatedBalance,
+        bono_caducidad: bonoCaducidadISO,
+      };
+      if (isFirstBono === "true") {
+        updatePayload.matricula_pagada = true;
+        updatePayload.matricula_fecha = new Date().toISOString().split("T")[0];
+      }
+
+      const { error: updateErr } = await supabase
+        .from("alumnos")
+        .update(updatePayload)
+        .eq("id", targetStudentId);
+
+      if (updateErr) {
+        console.warn("[Stripe Verify] Fallback sin bono_caducidad:", updateErr.message);
+        const fallbackPayload: Record<string, any> = {
+          plan_activo: bonoName || "Bono de Clases",
+          clases_restantes: updatedBalance,
+        };
+        if (isFirstBono === "true") {
+          fallbackPayload.matricula_pagada = true;
         }
+        await supabase
+          .from("alumnos")
+          .update(fallbackPayload)
+          .eq("id", targetStudentId);
       }
     }
 

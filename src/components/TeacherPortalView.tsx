@@ -1189,12 +1189,27 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
             </div>
 
             <div className="p-4 rounded-2xl bg-[var(--color-bg)] border border-[var(--color-border)] space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Precio Oficial:</span>
-                <span className="line-through text-slate-500">{selectedBonoForPayment.precioOriginal}</span>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">Subtotal Bono:</span>
+                <span className="line-through text-slate-500 font-mono">{selectedBonoForPayment.precioOriginal}</span>
+              </div>
+              <div className="flex justify-between items-center text-[var(--color-secondary)]">
+                <span>Descuento Docente (-10%):</span>
+                <span className="font-mono font-bold">
+                  {(() => {
+                    const orig = parseFloat((selectedBonoForPayment.precioOriginal || "0").replace(",", ".").replace(/[^0-9.]/g, "")) || 0;
+                    const doc = parseFloat((selectedBonoForPayment.precioDocente || "0").replace(",", ".").replace(/[^0-9.]/g, "")) || (orig * 0.9);
+                    const diff = orig - doc;
+                    return `-${diff.toFixed(2).replace(".", ",")} € (-10%)`;
+                  })()}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-emerald-400">
+                <span>Matrícula Anual:</span>
+                <span className="font-bold font-mono">0,00 € (Exenta por perfil Docente)</span>
               </div>
               <div className="flex justify-between items-center pt-2 border-t border-[var(--color-border)]">
-                <span className="font-bold text-slate-300">Total con 10% Dto:</span>
+                <span className="font-bold text-slate-300">Total a pagar:</span>
                 <span className="text-xl font-bold font-mono text-[var(--color-secondary)]">{selectedBonoForPayment.precioDocente}</span>
               </div>
             </div>

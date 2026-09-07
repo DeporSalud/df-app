@@ -48,6 +48,7 @@ import {
   getSesionReservasCount,
   isSesionCompleta
 } from "@/lib/openClassService";
+import { calculateBonoPriceAndMatricula } from "@/lib/matriculaService";
 
 const DEFAULT_STUDIO2_OPEN_CLASSES = [
   {
@@ -499,12 +500,16 @@ function ClasesContent() {
     }
   };
 
-  function checkIsStudentMatriculaPaid(student: any): boolean {
-    if (!student) return false;
-    if (student.matricula_pagada === true) return true;
-    if (typeof student.clases_restantes === "number" && student.clases_restantes > 0) return true;
-    if (student.plan_activo && student.plan_activo !== "Sin Plan Activo" && !student.plan_activo.startsWith("Pendiente:")) return true;
-    return false;
+  function getBonoCalculation(bono: any) {
+    if (!bono) return null;
+    const basePrice = parseFloat((bono.precio || "").replace(",", ".").replace(/[^0-9.]/g, "")) || 45;
+    return calculateBonoPriceAndMatricula({
+      bonoId: bono.id,
+      basePrice,
+      student: currentStudent,
+      assignedClassIds: assignedClassIds.length > 0 ? assignedClassIds : currentStudent?.alumnos_clases_ids,
+      userRole
+    });
   }
 
   const handleStripeCheckout = async () => {
@@ -512,8 +517,8 @@ function ClasesContent() {
     setIsStripeLoading(true);
 
     try {
-      const isMatriculaPaid = checkIsStudentMatriculaPaid(currentStudent);
-      const isFirstBonoOfYear = !isMatriculaPaid;
+      const calc = getBonoCalculation(selectedBonoForPayment);
+      const isFirstBonoOfYear = calc ? calc.matriculaCost > 0 : false;
       const res = await fetch("/api/stripe/create-checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -523,6 +528,8 @@ function ClasesContent() {
           studentName: currentStudent.nombre_completo,
           studentEmail: currentStudent.email,
           isFirstBonoOfYear,
+          isTeacher: calc?.exemptionType === "teacher",
+          isRegularStudent: calc?.exemptionType === "regular",
           returnUrl: window.location.origin + "/clases"
         })
       });
@@ -554,11 +561,10 @@ function ClasesContent() {
   const handleConfirmarTransferencia = async () => {
     if (!selectedBonoForPayment || !currentStudent?.id) return;
 
-    const basePrice = parseFloat(selectedBonoForPayment.precio.replace(/[^0-9.]/g, "")) || 45;
-    const isMatriculaPaid = checkIsStudentMatriculaPaid(currentStudent);
-    const isFirstBonoOfYear = !isMatriculaPaid;
-    const matriculaCost = isFirstBonoOfYear ? 15.00 : 0.00;
-    const totalAmount = basePrice + matriculaCost;
+    const calc = getBonoCalculation(selectedBonoForPayment);
+    const basePrice = parseFloat((selectedBonoForPayment.precio || "").replace(",", ".").replace(/[^0-9.]/g, "")) || 45;
+    const totalAmount = calc ? calc.totalToPay : basePrice;
+    const isFirstBonoOfYear = calc ? calc.matriculaCost > 0 : false;
 
     const planPendiente = `Pendiente: ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} € - Transferencia Bancaria)`;
 
@@ -610,7 +616,7 @@ function ClasesContent() {
     setModal({
       isOpen: true,
       title: "✓ Transferencia Notificada a Recepción",
-      message: `Hemos registrado tu solicitud para el ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) por Transferencia Bancaria.\n\nTu solicitud ya aparece en tiempo real en la pantalla de Recepción. En cuanto comprueben el ingreso en la cuenta de Santander o CaixaBank, validarán tu bono y tus clases se activarán automáticamente.`,
+      message: `Hemos registrado tu solicitud para el ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) por Transferencia Bancaria.${isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : calc?.exemptionType === "regular" ? " (matrícula 0,00€ exenta por ser alumno de Clases Regulares)" : ""}\n\nTu solicitud ya aparece en tiempo real en la pantalla de Recepción. En cuanto comprueben el ingreso en la cuenta de Santander o CaixaBank, validarán tu bono y tus clases se activarán automáticamente.`,
       type: "success",
       confirmText: "Aceptar"
     });
@@ -619,11 +625,10 @@ function ClasesContent() {
   const handleSolicitarRecepcion = async () => {
     if (!selectedBonoForPayment || !currentStudent?.id) return;
 
-    const basePrice = parseFloat(selectedBonoForPayment.precio.replace(/[^0-9.]/g, "")) || 45;
-    const isMatriculaPaid = checkIsStudentMatriculaPaid(currentStudent);
-    const isFirstBonoOfYear = !isMatriculaPaid;
-    const matriculaCost = isFirstBonoOfYear ? 15.00 : 0.00;
-    const totalAmount = basePrice + matriculaCost;
+    const calc = getBonoCalculation(selectedBonoForPayment);
+    const basePrice = parseFloat((selectedBonoForPayment.precio || "").replace(",", ".").replace(/[^0-9.]/g, "")) || 45;
+    const totalAmount = calc ? calc.totalToPay : basePrice;
+    const isFirstBonoOfYear = calc ? calc.matriculaCost > 0 : false;
 
     const planPendiente = `Pendiente: ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} € - Recepción)`;
 
@@ -675,7 +680,7 @@ function ClasesContent() {
     setModal({
       isOpen: true,
       title: "✓ Solicitud Registrada",
-      message: `Hemos registrado tu petición para el ${selectedBonoForPayment.nombre} por un importe de ${totalAmount.toFixed(2)} €${isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : ""}.\n\nTu solicitud ya está en la pantalla de Recepción. Podrás abonarlo en el mostrador en efectivo o datáfono cuando asistas a tu clase.`,
+      message: `Hemos registrado tu petición para el ${selectedBonoForPayment.nombre} por un importe de ${totalAmount.toFixed(2)} €${isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : calc?.exemptionType === "regular" ? " (matrícula 0,00€ exenta por ser alumno de Clases Regulares)" : ""}.\n\nTu solicitud ya está en la pantalla de Recepción. Podrás abonarlo en el mostrador en efectivo o datáfono cuando asistas a tu clase.`,
       type: "info",
       confirmText: "Aceptar"
     });
@@ -1040,33 +1045,170 @@ function ClasesContent() {
               </p>
             </div>
 
-            <div className="space-y-3 pt-1">
-              {bonosTarifas.map((bono) => (
-                <div 
-                  key={bono.id} 
-                  className="rounded-2xl border p-5 bg-[var(--color-bg-card)] border-[var(--color-border)] relative overflow-hidden transition-all shadow-lg hover:border-[var(--color-secondary)]/50"
-                >
-                  <div className="flex justify-between items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-lg font-[family-name:var(--font-heading)] text-white tracking-wide">{bono.nombre}</h3>
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">{bono.desc}</p>
+            {/* Banner Oficial de Estado de Matrícula (R1, R2, R3) */}
+            {(() => {
+              const testCalc = calculateBonoPriceAndMatricula({
+                bonoId: "Bono 4 clases",
+                basePrice: 45,
+                student: currentStudent,
+                assignedClassIds: assignedClassIds.length > 0 ? assignedClassIds : currentStudent?.alumnos_clases_ids,
+                userRole
+              });
+
+              if (testCalc.exemptionType === "regular") {
+                return (
+                  <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between text-xs text-emerald-400 shadow-sm">
+                    <div className="flex items-center gap-2.5">
+                      <CheckCircle2 size={20} className="shrink-0 text-emerald-400" />
+                      <div>
+                        <span className="font-bold block text-white text-xs">
+                          Matrícula Anual: <span className="text-emerald-400 font-mono">0,00€ (Exenta por ser alumno de Clases Regulares)</span>
+                        </span>
+                        <span className="text-[11px] text-slate-300">
+                          Tu cuota de inscripción anual ya fue abonada al formalizar el alta en tus cursos regulares. Solo abonas el coste neto del bono.
+                        </span>
+                      </div>
                     </div>
-                    
-                    <span className="text-xl font-bold font-mono text-[var(--color-secondary)] bg-[var(--color-secondary)]/10 px-3 py-1 rounded-xl border border-[var(--color-secondary)]/30 shrink-0 mt-1">
-                      {bono.precio}
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
+                      0€ Matrícula
                     </span>
                   </div>
+                );
+              }
 
-                  <div className="pt-3 mt-3 border-t border-[var(--color-border)] flex justify-end">
-                    <button
-                      onClick={() => setSelectedBonoForPayment(bono)}
-                      className="px-4 py-2 rounded-xl text-xs font-bold bg-[var(--color-secondary)] hover:bg-[var(--color-secondary)]/90 text-slate-950 transition-all shadow-lg shadow-[var(--color-secondary)]/20 active:scale-95 flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <span>Comprar Bono ({bono.precio})</span>
-                    </button>
+              if (testCalc.exemptionType === "teacher") {
+                return (
+                  <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between text-xs text-emerald-400 shadow-sm">
+                    <div className="flex items-center gap-2.5">
+                      <CheckCircle2 size={20} className="shrink-0 text-emerald-400" />
+                      <div>
+                        <span className="font-bold block text-white text-xs">
+                          Matrícula Anual: <span className="text-emerald-400 font-mono">0,00€ (Exenta por perfil Docente)</span>
+                        </span>
+                        <span className="text-[11px] text-slate-300">
+                          Tarifa exclusiva para profesores: 10% de descuento directo en todos los bonos y exención total de matrícula.
+                        </span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
+                      Docente (-10%)
+                    </span>
                   </div>
+                );
+              }
+
+              if (testCalc.exemptionType === "repeat_buyer") {
+                return (
+                  <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between text-xs text-emerald-400 shadow-sm">
+                    <div className="flex items-center gap-2.5">
+                      <CheckCircle2 size={20} className="shrink-0 text-emerald-400" />
+                      <div>
+                        <span className="font-bold block text-white text-xs">
+                          Matrícula Anual Temporada 2026/2027: <span className="text-emerald-400 font-mono">Abonada (0,00 €)</span>
+                        </span>
+                        <span className="text-[11px] text-slate-300">
+                          Ya has abonado la matrícula de temporada en una compra previa. En recargas posteriores el coste de matrícula es de 0,00€.
+                        </span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
+                      Abonada
+                    </span>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-xs text-amber-300 shadow-sm">
+                  <div className="flex items-center gap-2.5">
+                    <Info size={20} className="shrink-0 text-amber-400" />
+                    <div>
+                      <span className="font-bold block text-white text-xs">
+                        Alumnos Nuevos o Exclusivos de Open Class
+                      </span>
+                      <span className="text-[11px] text-amber-200/90">
+                        Se aplica la matrícula anual oficial (+15,00 €) en la 1ª compra de la temporada. En recargas posteriores el coste de matrícula será de 0,00 €.
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
+                    1er Bono (+15€)
+                  </span>
                 </div>
-              ))}
+              );
+            })()}
+
+            <div className="space-y-3 pt-1">
+              {bonosTarifas.map((bono) => {
+                const itemCalc = getBonoCalculation(bono);
+                const buttonText = itemCalc?.exemptionType === "regular"
+                  ? `Comprar Bono (${bono.precio}) • Matrícula 0€`
+                  : itemCalc?.exemptionType === "teacher"
+                  ? `Comprar Bono Docente (${itemCalc.totalToPay.toFixed(2)} €)`
+                  : itemCalc?.matriculaCost && itemCalc.matriculaCost > 0
+                  ? `Comprar Bono (${bono.precio} + 15€ Matrícula)`
+                  : `Comprar Bono (${bono.precio})`;
+
+                return (
+                  <div 
+                    key={bono.id} 
+                    className="rounded-2xl border p-5 bg-[var(--color-bg-card)] border-[var(--color-border)] relative overflow-hidden transition-all shadow-lg hover:border-[var(--color-secondary)]/50"
+                  >
+                    <div className="flex justify-between items-start gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <h3 className="text-lg font-[family-name:var(--font-heading)] text-white tracking-wide">{bono.nombre}</h3>
+                          {itemCalc?.exemptionType === "regular" && (
+                            <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                              0€ MATRÍCULA (REGULAR)
+                            </span>
+                          )}
+                          {itemCalc?.exemptionType === "teacher" && (
+                            <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                              -10% DOCENTE • 0€ MATRÍCULA
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">{bono.desc}</p>
+                      </div>
+                      
+                      <div className="text-right shrink-0 mt-1">
+                        <span className="text-xl font-bold font-mono text-[var(--color-secondary)] bg-[var(--color-secondary)]/10 px-3 py-1 rounded-xl border border-[var(--color-secondary)]/30 block">
+                          {itemCalc && itemCalc.discountAmount > 0 
+                            ? `${itemCalc.bonoPrice.toFixed(2)} €`
+                            : bono.precio}
+                        </span>
+                        {itemCalc && itemCalc.discountAmount > 0 && (
+                          <span className="text-[10px] text-slate-500 line-through block mt-0.5 font-mono">
+                            {bono.precio}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="pt-3 mt-3 border-t border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2">
+                      <div className="text-[11px]">
+                        {itemCalc?.exemptionType === "regular" ? (
+                          <span className="text-emerald-400 font-semibold">✓ Matrícula Anual: 0,00€ (Exenta por ser alumno de Clases Regulares)</span>
+                        ) : itemCalc?.exemptionType === "teacher" ? (
+                          <span className="text-emerald-400 font-semibold">✓ Matrícula Anual: 0,00€ (Exenta por perfil Docente)</span>
+                        ) : itemCalc?.matriculaCost && itemCalc.matriculaCost > 0 ? (
+                          <span className="text-amber-400 font-semibold">+ 15,00 € Matrícula Anual (1er bono)</span>
+                        ) : (
+                          <span className="text-emerald-400 font-semibold">✓ Matrícula Anual: 0,00€ (Abonada)</span>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => setSelectedBonoForPayment(bono)}
+                        className="px-4 py-2 rounded-xl text-xs font-bold bg-[var(--color-secondary)] hover:bg-[var(--color-secondary)]/90 text-slate-950 transition-all shadow-lg shadow-[var(--color-secondary)]/20 active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <span>{buttonText}</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </main>
         )}
@@ -1177,39 +1319,59 @@ function ClasesContent() {
             </div>
 
             {/* Price Summary Breakdown */}
+            {/* Price Summary Breakdown (R1, R2, R3) */}
             {(() => {
-              const basePrice = parseFloat(selectedBonoForPayment.precio.replace(/[^0-9.]/g, "")) || 45;
-              const isMatriculaPaid = checkIsStudentMatriculaPaid(currentStudent);
-              const isFirstBono = !isMatriculaPaid;
-              const matriculaCost = isFirstBono ? 15.00 : 0.00;
-              const totalToPay = basePrice + matriculaCost;
+              const calc = getBonoCalculation(selectedBonoForPayment);
+              if (!calc) return null;
 
               return (
                 <div className="p-3.5 rounded-2xl bg-[var(--color-bg)] border border-[var(--color-border)] space-y-2.5">
                   <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-400">Subtotal {selectedBonoForPayment.nombre}:</span>
-                    <span className="font-mono font-bold text-white">{basePrice.toFixed(2)} €</span>
+                    <span className="text-slate-400">Subtotal Bono:</span>
+                    <span className="font-mono font-bold text-white">{calc.basePrice.toFixed(2).replace(".", ",")} €</span>
                   </div>
 
-                  {isFirstBono ? (
-                    <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-xs">
-                      <div>
-                        <span className="font-bold text-amber-300 block">Matrícula Anual Oficial</span>
-                        <span className="text-[10px] text-slate-400">Inscripción anual de temporada (1er bono)</span>
-                      </div>
-                      <span className="font-mono font-bold text-amber-400 text-sm">+15.00 €</span>
-                    </div>
-                  ) : (
-                    <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between text-xs text-emerald-400">
-                      <span>Matrícula Anual 2026/2027:</span>
-                      <span className="font-bold">✓ Abonada (0,00 €)</span>
+                  {calc.discountAmount > 0 && (
+                    <div className="flex justify-between items-center text-xs text-[var(--color-secondary)]">
+                      <span>Descuento Docente (-10%):</span>
+                      <span className="font-mono font-bold">-{calc.discountAmount.toFixed(2).replace(".", ",")} €</span>
                     </div>
                   )}
 
+                  <div className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
+                    calc.matriculaCost > 0
+                      ? "bg-amber-500/10 border-amber-500/25 text-amber-300"
+                      : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                  }`}>
+                    <div>
+                      <span className="font-bold block">Matrícula Anual:</span>
+                      {calc.matriculaCost > 0 ? (
+                        <span className="text-[10px] text-slate-400">Inscripción anual de temporada (alumnos nuevos Open Class)</span>
+                      ) : (
+                        <span className="text-[10px] text-emerald-300/80">
+                          {calc.exemptionType === "regular"
+                            ? "Abonada al formalizar el alta regular"
+                            : calc.exemptionType === "teacher"
+                            ? "Exención para claustro de profesores"
+                            : "Abonada previamente esta temporada"}
+                        </span>
+                      )}
+                    </div>
+                    <span className="font-bold font-mono">
+                      {calc.matriculaCost > 0
+                        ? "+15,00 €"
+                        : calc.exemptionType === "regular"
+                        ? "0,00€ (Exenta por ser alumno de Clases Regulares)"
+                        : calc.exemptionType === "teacher"
+                        ? "0,00€ (Exenta por perfil Docente)"
+                        : "0,00€ (Abonada)"}
+                    </span>
+                  </div>
+
                   <div className="flex justify-between items-center pt-2 border-t border-[var(--color-border)]">
-                    <span className="text-xs font-bold text-slate-300">Total Final a Abonar:</span>
+                    <span className="text-xs font-bold text-slate-300">Total a pagar:</span>
                     <span className="text-2xl font-black font-mono text-[var(--color-secondary)]">
-                      {totalToPay.toFixed(2)} €
+                      {calc.totalToPay.toFixed(2).replace(".", ",")} €
                     </span>
                   </div>
                 </div>
