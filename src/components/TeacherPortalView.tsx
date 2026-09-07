@@ -79,7 +79,12 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
     if (!clase) return false;
     const name = (clase.nombre_clase || "").toLowerCase();
     const type = (clase.tipo_clase || "").toLowerCase();
-    return type.includes("open") || name.includes("open") || name.includes("comercial");
+    return (
+      type.includes("open") || 
+      name.includes("open class") || 
+      name.startsWith("open ") ||
+      name === "open"
+    );
   };
 
   const bonosDocentes = [
@@ -160,24 +165,12 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
         });
         setClasesProfesor(myClases);
 
-        // Open Classes & Formaciones (Studio 2 Paseo Castilla)
+        // Open Classes (Studio 2 Paseo Castilla) - Solo sesiones auténticas de Open Class
         let openList = allClases.filter(c => 
-          (c.sede === "castilla" || c.sede === "alcorcon") && (
-            c.tipo_clase === "Open Class" || 
-            c.nombre_clase?.toLowerCase().includes("open") ||
-            c.nombre_clase?.toLowerCase().includes("comercial") ||
-            c.nombre_clase?.toLowerCase().includes("formaci") ||
-            c.nombre_clase?.toLowerCase().includes("rotat")
-          )
+          (c.sede === "castilla" || c.sede === "alcorcon") && isOpenClass(c)
         );
         if (openList.length === 0) {
-          openList = allClases.filter(c => 
-            c.tipo_clase === "Open Class" || 
-            c.nombre_clase?.toLowerCase().includes("open") ||
-            c.nombre_clase?.toLowerCase().includes("comercial") ||
-            c.nombre_clase?.toLowerCase().includes("formaci") ||
-            c.nombre_clase?.toLowerCase().includes("rotat")
-          );
+          openList = allClases.filter(c => isOpenClass(c));
         }
         setAllOpenClasses(openList);
       }
@@ -372,6 +365,17 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   // 4. Booking Open Class as a Teacher
   const handleTeacherOpenClassBooking = async (clase: any) => {
     if (!teacherStudent?.id) return;
+
+    if (!isOpenClass(clase)) {
+      setModal({
+        isOpen: true,
+        title: "Solo Open Classes",
+        message: "En el portal de profesores solo está permitido reservar plazas en sesiones de Open Class. Las clases regulares no admiten reservas.",
+        type: "warning",
+        confirmText: "Entendido"
+      });
+      return;
+    }
 
     const isRotativa = 
       clase.nombre_clase?.toUpperCase().includes("ROTAT") || 
