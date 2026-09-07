@@ -109,8 +109,12 @@ export default function MisClasesPage() {
   const executeCancelarReservaOpenClass = async (reserva: OpenClassReserva) => {
     if (!currentStudent?.id) return;
 
-    // 1. Cancel in service
-    cancelarReservaOpenClass(reserva.id);
+    // 1. Cancel in service (returns false if already cancelled)
+    const didCancel = cancelarReservaOpenClass(reserva.id);
+    if (!didCancel) {
+      loadAllBookings();
+      return;
+    }
 
     // 2. Refund 1 class to student's bono
     const hasUnlimited = currentStudent.plan_activo?.toLowerCase().includes("ilimitad");
@@ -121,14 +125,19 @@ export default function MisClasesPage() {
       if (refetchStudents) await refetchStudents();
     }
 
-    // 3. Delete from alumnos_clases in Supabase if exists
+    // 3. Delete from alumnos_clases only if no other active reservations remain for this class
     try {
       if (reserva.clase_id && currentStudent.id) {
-        await supabase
-          .from("alumnos_clases")
-          .delete()
-          .eq("alumno_id", currentStudent.id)
-          .eq("clase_id", reserva.clase_id);
+        const otherActive = getReservasAlumno(currentStudent.id).filter(
+          r => r.clase_id === reserva.clase_id && r.id !== reserva.id && (r.estado === "Confirmada" || r.estado === "Asistida")
+        );
+        if (otherActive.length === 0) {
+          await supabase
+            .from("alumnos_clases")
+            .delete()
+            .eq("alumno_id", currentStudent.id)
+            .eq("clase_id", reserva.clase_id);
+        }
       }
     } catch (e) {
       console.warn("Could not delete from alumnos_clases:", e);

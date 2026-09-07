@@ -385,6 +385,10 @@ function ClasesContent() {
     crearReservaOpenClass({
       alumno_id: currentStudent.id,
       alumno_nombre: currentStudent.nombre_completo,
+      alumno_email: currentStudent.email,
+      alumno_telefono: currentStudent.telefono,
+      alumno_dni: currentStudent.dni,
+      alumno_plan: currentStudent.plan_activo,
       clase,
       calendarDay
     });
