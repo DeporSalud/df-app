@@ -162,6 +162,19 @@ function ClasesContent() {
   const [selectedSede, setSelectedSede] = useState<string>("tejar");
   const [selectedDay, setSelectedDay] = useState<string>("LUNES");
   const [isLoading, setIsLoading] = useState(true);
+  const [reservasTick, setReservasTick] = useState(0);
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setReservasTick(prev => prev + 1);
+    };
+    window.addEventListener("df_reservas_updated", handleUpdate);
+    window.addEventListener("storage", handleUpdate);
+    return () => {
+      window.removeEventListener("df_reservas_updated", handleUpdate);
+      window.removeEventListener("storage", handleUpdate);
+    };
+  }, []);
 
   // Cálculo de caducidad de bono para avisos en Open Class
   const hasRemainingClasses = typeof currentStudent?.clases_restantes === "number" && currentStudent.clases_restantes > 0;
@@ -999,9 +1012,16 @@ function ClasesContent() {
                       </div>
 
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-4 pt-3 border-t border-[var(--color-border)]">
-                        <span className="text-xs text-[var(--color-text-secondary)]">
-                          Plazas: <strong className="text-white">{clase.aforo_maximo || 20} aforo</strong>
-                        </span>
+                        {(() => {
+                          const reservasCount = getSesionReservasCount(clase.id, selectedCalendarDay.dateISO);
+                          const maxCapacity = clase.aforo_maximo || 20;
+                          const plazasLibres = Math.max(0, maxCapacity - reservasCount);
+                          return (
+                            <span className="text-xs text-[var(--color-text-secondary)]">
+                              Plazas: <strong className="text-white">{isFull || plazasLibres === 0 ? "Aforo Completo" : `${plazasLibres} disponibles`}</strong> ({reservasCount}/{maxCapacity} reservas)
+                            </span>
+                          );
+                        })()}
 
                         {isRotativa ? (
                           <span className="text-xs font-bold text-amber-300 bg-amber-500/15 px-3.5 py-2 rounded-xl border border-amber-500/30 flex items-center gap-1.5 shadow-sm">
