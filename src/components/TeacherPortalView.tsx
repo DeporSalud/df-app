@@ -234,26 +234,72 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
         setAsistenciasRegistradas(ids);
       } else {
         // Regular class: fetch enrollments from alumnos_clases
-        const { data: rawEnrollments, error: rawErr } = await supabase
-          .from("alumnos_clases")
-          .select("alumno_id")
-          .eq("clase_id", clase.id);
-
         let classStudents: any[] = [];
-        if (!rawErr && rawEnrollments && rawEnrollments.length > 0) {
-          const studentIds = rawEnrollments.map((e: any) => e.alumno_id);
-          const { data: studentsList } = await supabase
-            .from("alumnos")
-            .select("*")
-            .in("id", studentIds)
-            .order("nombre_completo", { ascending: true });
 
-          if (studentsList) {
-            classStudents = studentsList.map((s: any) => ({
-              ...s,
-              bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0,
-              debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
-            }));
+        try {
+          const { data: rawEnrollments, error: rawErr } = await supabase
+            .from("alumnos_clases")
+            .select("alumno_id")
+            .eq("clase_id", clase.id);
+
+          if (!rawErr && rawEnrollments && rawEnrollments.length > 0) {
+            const studentIds = rawEnrollments
+              .map((e: any) => e.alumno_id)
+              .filter((id: any) => Boolean(id && typeof id === "string" && id.trim() !== ""));
+
+            if (studentIds.length > 0) {
+              const { data: studentsList } = await supabase
+                .from("alumnos")
+                .select("*")
+                .in("id", studentIds)
+                .order("nombre_completo", { ascending: true });
+
+              if (studentsList && studentsList.length > 0) {
+                classStudents = studentsList.map((s: any) => ({
+                  ...s,
+                  bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0,
+                  debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
+                }));
+              }
+            }
+          }
+        } catch (errStep1) {
+          console.error("Error fetching alumnos_clases in student-app:", errStep1);
+        }
+
+        // Relational query fallback if 2-step returned 0
+        if (classStudents.length === 0) {
+          try {
+            const { data: enrolled, error: enrollError } = await supabase
+              .from("alumnos_clases")
+              .select(`
+                alumno_id,
+                alumnos (
+                  id,
+                  nombre_completo,
+                  telefono,
+                  email,
+                  plan_activo,
+                  clases_restantes,
+                  estado,
+                  sede,
+                  dni
+                )
+              `)
+              .eq("clase_id", clase.id);
+
+            if (!enrollError && enrolled && enrolled.length > 0) {
+              classStudents = enrolled
+                .map((e: any) => (Array.isArray(e.alumnos) ? e.alumnos[0] : e.alumnos))
+                .filter((a: any) => a != null && a.id)
+                .map((s: any) => ({
+                  ...s,
+                  bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0,
+                  debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
+                }));
+            }
+          } catch (errStep2) {
+            console.error("Error in fallback enrolled query in student-app:", errStep2);
           }
         }
 
@@ -285,6 +331,19 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
     setSelectedSessionDate(defaultDate);
     await loadRosterForDate(clase, defaultDate);
   };
+
+  // Automatic reactivity: whenever selectedClase changes, guarantee roster loading
+  useEffect(() => {
+    if (selectedClase?.id) {
+      const defaultDate = selectedSessionDate || 
+        calendarDays.find(d => normalizeDay(d.dayName) === normalizeDay(selectedClase.dia_semana))?.dateISO || 
+        new Date().toISOString().split("T")[0];
+      if (!selectedSessionDate) {
+        setSelectedSessionDate(defaultDate);
+      }
+      loadRosterForDate(selectedClase, defaultDate);
+    }
+  }, [selectedClase?.id]);
 
   // Switch session date in Open Class Attendance
   const handleChangeSessionDate = async (newDateIso: string) => {
