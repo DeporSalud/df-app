@@ -45,9 +45,73 @@ const BONOS_DATA: Record<string, BonoDefinition> = {
     clasesCount: 1,
     desc: "Entrada para 1 sesión de Open Class",
   },
+  // --- PROMO OPEN CLASS • SOLO SEPTIEMBRE 2026 ---
+  "promo_sep_4_alumno": {
+    id: "promo_sep_4_alumno",
+    nombre: "Promo Septiembre • 4 Clases (Alumno DF)",
+    precio: 25.00,
+    clasesCount: 4,
+    desc: "4 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_4_no_alumno": {
+    id: "promo_sep_4_no_alumno",
+    nombre: "Promo Septiembre • 4 Clases (No Alumno)",
+    precio: 30.00,
+    clasesCount: 4,
+    desc: "4 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_8_alumno": {
+    id: "promo_sep_8_alumno",
+    nombre: "Promo Septiembre • 8 Clases (Alumno DF)",
+    precio: 35.00,
+    clasesCount: 8,
+    desc: "8 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_8_no_alumno": {
+    id: "promo_sep_8_no_alumno",
+    nombre: "Promo Septiembre • 8 Clases (No Alumno)",
+    precio: 42.00,
+    clasesCount: 8,
+    desc: "8 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_12_alumno": {
+    id: "promo_sep_12_alumno",
+    nombre: "Promo Septiembre • 12 Clases (Alumno DF)",
+    precio: 45.00,
+    clasesCount: 12,
+    desc: "12 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_12_no_alumno": {
+    id: "promo_sep_12_no_alumno",
+    nombre: "Promo Septiembre • 12 Clases (No Alumno)",
+    precio: 55.00,
+    clasesCount: 12,
+    desc: "12 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_4": {
+    id: "promo_sep_4",
+    nombre: "Promo Septiembre • 4 Clases",
+    precio: 30.00,
+    clasesCount: 4,
+    desc: "4 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_8": {
+    id: "promo_sep_8",
+    nombre: "Promo Septiembre • 8 Clases",
+    precio: 42.00,
+    clasesCount: 8,
+    desc: "8 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_12": {
+    id: "promo_sep_12",
+    nombre: "Promo Septiembre • 12 Clases",
+    precio: 55.00,
+    clasesCount: 12,
+    desc: "12 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
 };
 
-import { isTeacherProfile, isRegularClassStudent, hasPaidSeasonMatricula } from "@/lib/matriculaService";
+import { isTeacherProfile, isRegularClassStudent, hasPaidSeasonMatricula, isPromoSeptiembreBono, isPromoSeptiembreActive } from "@/lib/matriculaService";
 
 export async function POST(req: NextRequest) {
   try {
@@ -134,20 +198,38 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Promo Septiembre check & validity
+    const isPromo = isPromoSeptiembreBono(bono.id) || isPromoSeptiembreBono(bonoId);
+    if (isPromo && !isPromoSeptiembreActive()) {
+      return NextResponse.json(
+        { success: false, error: "La promoción de Open Class de septiembre ha finalizado (vigencia hasta el 30 de septiembre de 2026)." },
+        { status: 400 }
+      );
+    }
+
     // Matrícula charge rule:
     // EXEMPT (0,00€) if:
+    // - Promo Septiembre Bono (¡Matrícula 100% Gratuita!)
     // - Regular class student (R1)
     // - Teacher (R2)
     // - Repeat buyer who already paid matricula this season (R3)
-    // ONLY charged (+15,00€) if exclusive Open Class student on first purchase of the season
-    const chargeMatricula = !isTeacher && !isRegular && !isAlreadyPaid && (
+    // ONLY charged (+15,00€) if exclusive Open Class student on first purchase of regular bonos
+    const chargeMatricula = !isPromo && !isTeacher && !isRegular && !isAlreadyPaid && (
       studentVerifiedInDb ? true : Boolean(isFirstBonoOfYear !== false)
     );
 
+    // Dynamic price adjustment if generic promo bono ID was used by a regular student or teacher
+    let basePrice = bono.precio;
+    if (isPromo && (isRegular || isTeacher)) {
+      if (bono.id === "promo_sep_4") basePrice = 25.00;
+      if (bono.id === "promo_sep_8") basePrice = 35.00;
+      if (bono.id === "promo_sep_12") basePrice = 45.00;
+    }
+
     // Apply 10% teacher discount if teacher
     const unitAmount = isTeacher 
-      ? Math.round(bono.precio * 0.90 * 100) 
-      : Math.round(bono.precio * 100);
+      ? Math.round(basePrice * 0.90 * 100) 
+      : Math.round(basePrice * 100);
 
     const lineItems: any[] = [
       {
@@ -193,6 +275,8 @@ export async function POST(req: NextRequest) {
         clasesCount: bono.clasesCount.toString(),
         isTeacher: isTeacher ? "true" : "false",
         isRegularStudent: isRegular ? "true" : "false",
+        isPromoSeptiembre: isPromo ? "true" : "false",
+        bonoCaducidad: isPromo ? "2026-09-30T23:59:59.000Z" : "",
         isFirstBono: chargeMatricula ? "true" : "false",
         matriculaCost: chargeMatricula ? "15.00" : "0.00",
         totalAmount: ((unitAmount / 100) + (chargeMatricula ? 15.00 : 0.00)).toFixed(2),

@@ -48,7 +48,13 @@ import {
   getSesionReservasCount,
   isSesionCompleta
 } from "@/lib/openClassService";
-import { calculateBonoPriceAndMatricula } from "@/lib/matriculaService";
+import { 
+  calculateBonoPriceAndMatricula, 
+  isPromoSeptiembreActive, 
+  isPromoSeptiembreBono, 
+  PROMO_SEPTIEMBRE_BONOS, 
+  isRegularClassStudent 
+} from "@/lib/matriculaService";
 
 const DEFAULT_STUDIO2_OPEN_CLASSES = [
   {
@@ -163,6 +169,18 @@ function ClasesContent() {
   const [selectedDay, setSelectedDay] = useState<string>("LUNES");
   const [isLoading, setIsLoading] = useState(true);
   const [reservasTick, setReservasTick] = useState(0);
+
+  // Promo Septiembre: Colectivo (Alumnos DF vs No Alumnos)
+  const isStudentAlumnoDF = isRegularClassStudent(currentStudent, { assignedClassIds });
+  const [promoCategory, setPromoCategory] = useState<"alumno" | "no_alumno">("alumno");
+
+  useEffect(() => {
+    if (isStudentAlumnoDF) {
+      setPromoCategory("alumno");
+    } else {
+      setPromoCategory("no_alumno");
+    }
+  }, [isStudentAlumnoDF]);
 
   useEffect(() => {
     const handleUpdate = () => {
@@ -525,7 +543,8 @@ function ClasesContent() {
       basePrice,
       student: currentStudent,
       assignedClassIds: assignedClassIds.length > 0 ? assignedClassIds : currentStudent?.alumnos_clases_ids,
-      userRole
+      userRole,
+      isPromoSeptiembre: bono.isPromo || isPromoSeptiembreBono(bono.id)
     });
   }
 
@@ -1069,6 +1088,195 @@ function ClasesContent() {
               </p>
             </div>
 
+            {/* --- PROMO OPEN CLASS • SOLO SEPTIEMBRE 2026 --- */}
+            {isPromoSeptiembreActive() && (
+              <div className="relative rounded-3xl p-5 sm:p-6 bg-gradient-to-br from-amber-500/15 via-purple-950/30 to-black border-2 border-amber-500/40 shadow-2xl overflow-hidden space-y-4">
+                {/* Decorative background glow */}
+                <div className="absolute -top-24 -right-24 w-48 h-48 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
+                <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-purple-600/15 rounded-full blur-3xl pointer-events-none" />
+
+                {/* Header Promo */}
+                <div className="flex items-start justify-between gap-3 flex-wrap relative z-10">
+                  <div>
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-black uppercase tracking-widest mb-2 shadow-sm">
+                      <Sparkles size={12} className="text-amber-400 animate-pulse" />
+                      <span>PROMO OPEN CLASS • SOLO SEPTIEMBRE</span>
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
+                      <span>Tarifas Especiales de Septiembre</span>
+                    </h2>
+                    <p className="text-xs text-slate-300 mt-1">
+                      Promoción oficial válida del <strong className="text-white">9 al 30 de Septiembre de 2026</strong>.
+                    </p>
+                  </div>
+
+                  {/* Badge Matrícula Gratuita */}
+                  <div className="px-3.5 py-2 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-right shrink-0">
+                    <span className="text-[10px] font-bold text-emerald-300 block uppercase tracking-wider">Ventaja Especial</span>
+                    <span className="text-sm font-black text-white flex items-center gap-1 justify-end">
+                      <CheckCircle2 size={16} className="text-emerald-400" />
+                      Matrícula 0,00 € (Gratis)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Aviso oficial del cartel */}
+                <div className="p-3 rounded-xl bg-black/50 border border-white/10 flex items-center gap-2.5 text-xs text-amber-200/90 relative z-10">
+                  <Info size={16} className="text-amber-400 shrink-0" />
+                  <span>
+                    Las clases de estos bonos se pueden utilizar hasta el <strong>30 de septiembre de 2026</strong> en las Open Class de Studio 2 (Paseo de Castilla, 41).
+                  </span>
+                </div>
+
+                {/* Selector de Colectivo: Alumnos DF vs No Alumnos */}
+                <div className="space-y-2 relative z-10">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-300 font-semibold">Selecciona tu categoría:</span>
+                    {isStudentAlumnoDF ? (
+                      <span className="text-[11px] font-bold text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/25">
+                        ✓ Detectado: Alumno DF
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-bold text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded-full border border-amber-500/25">
+                        Tarifa de Bienvenida (No Alumno)
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 p-1 bg-black/60 rounded-2xl border border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setPromoCategory("alumno")}
+                      className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center ${
+                        promoCategory === "alumno"
+                          ? "bg-[var(--color-secondary)] text-slate-950 shadow-lg shadow-[var(--color-secondary)]/30"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      <span className="uppercase tracking-wider">Alumnos DF</span>
+                      <span className="text-[10px] opacity-90 font-normal">Precio Exclusivo Alumnos</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPromoCategory("no_alumno")}
+                      className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center ${
+                        promoCategory === "no_alumno"
+                          ? "bg-[var(--color-secondary)] text-slate-950 shadow-lg shadow-[var(--color-secondary)]/30"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      <span className="uppercase tracking-wider">No Alumnos</span>
+                      <span className="text-[10px] opacity-90 font-normal">Tarifa de Bienvenida</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Grid de las 3 tarjetas de bonos de la promoción */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1 relative z-10">
+                  {PROMO_SEPTIEMBRE_BONOS.map((promo) => {
+                    const isAlumno = promoCategory === "alumno";
+                    const price = isAlumno ? promo.precioAlumno : promo.precioNoAlumno;
+                    const savings = promo.precioHabitual - price;
+                    const isPopular = promo.clasesCount === 8;
+
+                    return (
+                      <div
+                        key={promo.id}
+                        className={`relative rounded-2xl p-4 bg-black/70 border transition-all flex flex-col justify-between ${
+                          isPopular 
+                            ? "border-amber-500/60 shadow-lg shadow-amber-500/15 ring-1 ring-amber-500/30" 
+                            : "border-white/10 hover:border-white/25"
+                        }`}
+                      >
+                        {isPopular && (
+                          <div className="absolute -top-2.5 right-4 px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[9px] font-black uppercase tracking-wider shadow">
+                            Más Recomendado
+                          </div>
+                        )}
+
+                        <div>
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <span className="text-xs font-bold text-amber-400 block uppercase tracking-wider">
+                                {promo.clasesCount} Clases
+                              </span>
+                              <h3 className="text-base font-extrabold text-white">
+                                {promo.nombre}
+                              </h3>
+                            </div>
+                            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                              Ahorras {savings}€
+                            </span>
+                          </div>
+
+                          {/* Precio */}
+                          <div className="my-3 pb-3 border-b border-white/10">
+                            <div className="flex items-baseline gap-2">
+                              <span className="text-3xl font-black font-mono text-white">
+                                {price.toFixed(2).replace(".", ",")} €
+                              </span>
+                              <span className="text-xs text-slate-500 line-through font-mono">
+                                {promo.precioHabitual.toFixed(2).replace(".", ",")} €
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-emerald-400 font-semibold block mt-1">
+                              ✓ Matrícula 0,00 € Gratuita
+                            </span>
+                            <span className="text-[10px] text-slate-400 block mt-0.5">
+                              (Sin cuota de inscripción anual de 15€)
+                            </span>
+                          </div>
+
+                          <ul className="text-xs text-slate-300 space-y-1.5 mb-4">
+                            <li className="flex items-center gap-1.5">
+                              <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                              <span>{promo.clasesCount} sesiones en Open Class</span>
+                            </li>
+                            <li className="flex items-center gap-1.5">
+                              <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                              <span>Studio 2 (Paseo Castilla, 41)</span>
+                            </li>
+                            <li className="flex items-center gap-1.5">
+                              <Clock size={13} className="text-amber-400 shrink-0" />
+                              <span>Válido hasta el 30 de Septiembre</span>
+                            </li>
+                          </ul>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const promoBono = {
+                              id: isAlumno ? `${promo.id}_alumno` : `${promo.id}_no_alumno`,
+                              nombre: `${promo.nombre} (${isAlumno ? "Alumno DF" : "No Alumno"})`,
+                              precio: `${price} €`,
+                              desc: `${promo.clasesCount} clases de Open Class • Válido hasta el 30 de Septiembre • Matrícula Gratuita (0€)`,
+                              isPromo: true,
+                              clasesCount: promo.clasesCount
+                            };
+                            setSelectedBonoForPayment(promoBono);
+                          }}
+                          className="w-full py-2.5 px-4 rounded-xl text-xs font-extrabold bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 transition-all shadow-md shadow-amber-500/20 active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Sparkles size={14} />
+                          <span>Comprar Promo ({price} €) • 0€ Matrícula</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Separador hacia bonos estándar si la promo está activa */}
+            {isPromoSeptiembreActive() && (
+              <div className="pt-2">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <span>Tarifas Habituales de Temporada (Bonos Estándar)</span>
+                </h3>
+              </div>
+            )}
+
             {/* Banner Oficial de Estado de Matrícula (R1, R2, R3) */}
             {(() => {
               const testCalc = calculateBonoPriceAndMatricula({
@@ -1373,7 +1581,9 @@ function ClasesContent() {
                         <span className="text-[10px] text-slate-400">Inscripción anual de temporada (alumnos nuevos Open Class)</span>
                       ) : (
                         <span className="text-[10px] text-emerald-300/80">
-                          {calc.exemptionType === "regular"
+                          {calc.exemptionType === "promo_septiembre"
+                            ? "Promoción Especial Septiembre • Matrícula 100% Gratuita"
+                            : calc.exemptionType === "regular"
                             ? "Abonada al formalizar el alta regular"
                             : calc.exemptionType === "teacher"
                             ? "Exención para claustro de profesores"
@@ -1384,6 +1594,8 @@ function ClasesContent() {
                     <span className="font-bold font-mono">
                       {calc.matriculaCost > 0
                         ? "+15,00 €"
+                        : calc.exemptionType === "promo_septiembre"
+                        ? "0,00€ (Matrícula Gratuita)"
                         : calc.exemptionType === "regular"
                         ? "0,00€ (Exenta por ser alumno de Clases Regulares)"
                         : calc.exemptionType === "teacher"

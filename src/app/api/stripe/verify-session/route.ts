@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { createClient } from "@supabase/supabase-js";
+import { isPromoSeptiembreBono } from "@/lib/matriculaService";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wjnoawmefdurqqjwqdmi.supabase.co";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "sb_publishable_dWudcdKMOeKH22g0IRKV7w_bxWNtEh2";
@@ -113,10 +114,16 @@ export async function POST(req: NextRequest) {
       const currentBalance = typeof student.clases_restantes === "number" ? student.clases_restantes : 0;
       updatedBalance = isUnlimited ? 999 : currentBalance + count;
 
-      // Calcular fecha de caducidad a 1 mes natural vista
-      const expDate = new Date();
-      expDate.setMonth(expDate.getMonth() + 1);
-      const bonoCaducidadISO = expDate.toISOString();
+      // Calcular fecha de caducidad
+      const isPromo = isPromoSeptiembreBono(bonoId) || isPromoSeptiembreBono(bonoName) || session.metadata?.isPromoSeptiembre === "true";
+      let bonoCaducidadISO: string;
+      if (isPromo) {
+        bonoCaducidadISO = "2026-09-30T23:59:59.000Z";
+      } else {
+        const expDate = new Date();
+        expDate.setMonth(expDate.getMonth() + 1);
+        bonoCaducidadISO = expDate.toISOString();
+      }
 
       // Actualizar en Supabase con tolerancia a fallos si la columna no existe aún
       const updatePayload: Record<string, any> = {
@@ -124,7 +131,7 @@ export async function POST(req: NextRequest) {
         clases_restantes: updatedBalance,
         bono_caducidad: bonoCaducidadISO,
       };
-      if (isFirstBono === "true") {
+      if (isFirstBono === "true" || isPromo) {
         updatePayload.matricula_pagada = true;
         updatePayload.matricula_fecha = new Date().toISOString().split("T")[0];
       }
@@ -140,7 +147,7 @@ export async function POST(req: NextRequest) {
           plan_activo: bonoName || "Bono de Clases",
           clases_restantes: updatedBalance,
         };
-        if (isFirstBono === "true") {
+        if (isFirstBono === "true" || isPromo) {
           fallbackPayload.matricula_pagada = true;
         }
         await supabase
@@ -156,7 +163,9 @@ export async function POST(req: NextRequest) {
       bonoName: bonoName || "Bono de Clases",
       clasesCount: count,
       updatedBalance,
-      bonoCaducidad: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      bonoCaducidad: (isPromoSeptiembreBono(bonoId) || isPromoSeptiembreBono(bonoName) || session.metadata?.isPromoSeptiembre === "true")
+        ? "2026-09-30T23:59:59.000Z"
+        : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       totalAmount: totalAmount || "0.00",
       customerEmail: session.customer_details?.email || studentEmail,
       receiptUrl: (session as any).receipt_url || null,
