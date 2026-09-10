@@ -7,6 +7,7 @@ import {
   normalizeBase64,
 } from "@/lib/redsys";
 import { createClient } from "@supabase/supabase-js";
+import { isPromoSeptiembreBono } from "@/lib/matriculaService";
 
 const supabaseUrl =
   process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wjnoawmefdurqqjwqdmi.supabase.co";
@@ -149,10 +150,20 @@ export async function POST(req: NextRequest) {
         typeof student.clases_restantes === "number" ? student.clases_restantes : 0;
       const updatedBalance = isUnlimited ? 999 : currentBalance + count;
 
-      // Calcular fecha de caducidad a 1 mes natural vista (+30 días)
-      const expDate = new Date();
-      expDate.setMonth(expDate.getMonth() + 1);
-      const bonoCaducidadISO = expDate.toISOString();
+      // Calcular fecha de caducidad
+      const isPromo =
+        isPromoSeptiembreBono(bonoId) ||
+        isPromoSeptiembreBono(bonoName) ||
+        metadata.isPromo === "true";
+
+      let bonoCaducidadISO: string;
+      if (isPromo) {
+        bonoCaducidadISO = "2026-09-30T23:59:59.000Z";
+      } else {
+        const expDate = new Date();
+        expDate.setMonth(expDate.getMonth() + 1);
+        bonoCaducidadISO = expDate.toISOString();
+      }
 
       const updatePayload: Record<string, any> = {
         plan_activo: bonoName || "Bono de Clases",
@@ -160,7 +171,7 @@ export async function POST(req: NextRequest) {
         bono_caducidad: bonoCaducidadISO,
       };
 
-      if (isFirstBono === "true" || isFirstBono === true) {
+      if (isFirstBono === "true" || isFirstBono === true || isPromo) {
         updatePayload.matricula_pagada = true;
         updatePayload.matricula_fecha = new Date().toISOString().split("T")[0];
       }

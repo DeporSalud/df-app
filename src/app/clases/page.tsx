@@ -700,6 +700,8 @@ function ClasesContent() {
           isFirstBonoOfYear,
           isTeacher: calc?.exemptionType === "teacher",
           isRegularStudent: calc?.exemptionType === "regular",
+          isPromo: calc?.exemptionType === "promo_septiembre" || isPromoSeptiembreBono(selectedBonoForPayment.id),
+          calculatedPrice: calc?.bonoPrice,
           payMethod,
         })
       });

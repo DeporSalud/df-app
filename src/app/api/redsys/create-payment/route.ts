@@ -8,6 +8,8 @@ import {
   isTeacherProfile,
   isRegularClassStudent,
   hasPaidSeasonMatricula,
+  isPromoSeptiembreBono,
+  isPromoSeptiembreActive,
 } from "@/lib/matriculaService";
 
 interface BonoDefinition {
@@ -19,6 +21,7 @@ interface BonoDefinition {
 }
 
 const BONOS_DATA: Record<string, BonoDefinition> = {
+  // --- BONOS REGULARES OPEN CLASS ---
   "Bono 4 clases": {
     id: "Bono 4 clases",
     nombre: "Bono 4 Clases",
@@ -54,6 +57,71 @@ const BONOS_DATA: Record<string, BonoDefinition> = {
     clasesCount: 1,
     desc: "Entrada para 1 sesión de Open Class",
   },
+
+  // --- PROMO OPEN CLASS • SOLO SEPTIEMBRE 2026 ---
+  "promo_sep_4_alumno": {
+    id: "promo_sep_4_alumno",
+    nombre: "Promo Septiembre • 4 Clases (Alumno DF)",
+    precio: 25.0,
+    clasesCount: 4,
+    desc: "4 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_4_no_alumno": {
+    id: "promo_sep_4_no_alumno",
+    nombre: "Promo Septiembre • 4 Clases (No Alumno)",
+    precio: 30.0,
+    clasesCount: 4,
+    desc: "4 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_8_alumno": {
+    id: "promo_sep_8_alumno",
+    nombre: "Promo Septiembre • 8 Clases (Alumno DF)",
+    precio: 35.0,
+    clasesCount: 8,
+    desc: "8 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_8_no_alumno": {
+    id: "promo_sep_8_no_alumno",
+    nombre: "Promo Septiembre • 8 Clases (No Alumno)",
+    precio: 42.0,
+    clasesCount: 8,
+    desc: "8 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_12_alumno": {
+    id: "promo_sep_12_alumno",
+    nombre: "Promo Septiembre • 12 Clases (Alumno DF)",
+    precio: 45.0,
+    clasesCount: 12,
+    desc: "12 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_12_no_alumno": {
+    id: "promo_sep_12_no_alumno",
+    nombre: "Promo Septiembre • 12 Clases (No Alumno)",
+    precio: 55.0,
+    clasesCount: 12,
+    desc: "12 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_4": {
+    id: "promo_sep_4",
+    nombre: "Promo Septiembre • 4 Clases",
+    precio: 30.0,
+    clasesCount: 4,
+    desc: "4 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_8": {
+    id: "promo_sep_8",
+    nombre: "Promo Septiembre • 8 Clases",
+    precio: 42.0,
+    clasesCount: 8,
+    desc: "8 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
+  "promo_sep_12": {
+    id: "promo_sep_12",
+    nombre: "Promo Septiembre • 12 Clases",
+    precio: 55.0,
+    clasesCount: 12,
+    desc: "12 clases Open Class • Válido hasta 30 de Septiembre • Matrícula Gratuita",
+  },
 };
 
 export async function POST(req: NextRequest) {
@@ -67,13 +135,45 @@ export async function POST(req: NextRequest) {
       isFirstBonoOfYear,
       isTeacher: clientIsTeacher,
       isRegularStudent: clientIsRegular,
+      calculatedPrice,
       payMethod, // optional: 'z' for Bizum, 'T' for Card, or undefined for all
     } = body;
 
     const idClean = (bonoId || "").toLowerCase().trim();
-    const bono =
-      BONOS_DATA[bonoId] ||
-      Object.values(BONOS_DATA).find((b) => {
+
+    // 1. Búsqueda exacta primero
+    let bono: BonoDefinition | undefined = BONOS_DATA[bonoId];
+
+    // 2. Si es promo de septiembre, buscar específicamente entre bonos promo
+    if (!bono && isPromoSeptiembreBono(idClean)) {
+      bono = Object.values(BONOS_DATA).find((b) => {
+        const bId = b.id.toLowerCase();
+        if (!isPromoSeptiembreBono(bId)) return false;
+        if (idClean.includes("alumno") && !idClean.includes("no_alumno") && !idClean.includes("no alumno")) {
+          if (bId.includes("alumno") && !bId.includes("no")) {
+            if (idClean.includes("4") && bId.includes("4")) return true;
+            if (idClean.includes("8") && bId.includes("8")) return true;
+            if (idClean.includes("12") && bId.includes("12")) return true;
+          }
+        }
+        if (idClean.includes("no_alumno") || idClean.includes("no alumno")) {
+          if (bId.includes("no_alumno") || bId.includes("no alumno")) {
+            if (idClean.includes("4") && bId.includes("4")) return true;
+            if (idClean.includes("8") && bId.includes("8")) return true;
+            if (idClean.includes("12") && bId.includes("12")) return true;
+          }
+        }
+        if (idClean.includes("4") && bId.includes("4")) return true;
+        if (idClean.includes("8") && bId.includes("8")) return true;
+        if (idClean.includes("12") && bId.includes("12")) return true;
+        return false;
+      });
+    }
+
+    // 3. Si no es promo, buscar entre bonos regulares
+    if (!bono) {
+      bono = Object.values(BONOS_DATA).find((b) => {
+        if (isPromoSeptiembreBono(b.id)) return false;
         const bId = b.id.toLowerCase();
         if (bId === idClean) return true;
         if (idClean.includes("4") && bId.includes("4")) return true;
@@ -91,6 +191,7 @@ export async function POST(req: NextRequest) {
           return true;
         return false;
       });
+    }
 
     if (!bono) {
       return NextResponse.json(
@@ -179,16 +280,51 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Regla de Matrícula: Exenta para regulares, profesores y quienes ya la pagaron
+    // Regla de Promo de Septiembre
+    const isPromo =
+      isPromoSeptiembreBono(bono.id) ||
+      isPromoSeptiembreBono(bonoId) ||
+      Boolean(body.isPromo);
+
+    if (isPromo && !isPromoSeptiembreActive()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "La promoción de Open Class de septiembre ha finalizado (vigencia hasta el 30 de septiembre de 2026).",
+        },
+        { status: 400 }
+      );
+    }
+
+    // Regla de Matrícula:
+    // ¡Los bonos de Promo Septiembre tienen MATRÍCULA 0,00€ GRATUITA SIEMPRE!
+    // Para bonos regulares: Exenta si es regular, profesor o ya la pagó.
     const chargeMatricula =
+      !isPromo &&
       !isTeacher &&
       !isRegular &&
       !isAlreadyPaid &&
       (studentVerifiedInDb ? true : Boolean(isFirstBonoOfYear !== false));
 
-    const unitAmount = isTeacher
-      ? Math.round(bono.precio * 0.9 * 100)
-      : Math.round(bono.precio * 100);
+    // Determinar precio base del bono
+    let basePrice = bono.precio;
+
+    // Si el cliente nos envió un precio calculado válido (ej. tarifa alumno vs no alumno)
+    if (typeof calculatedPrice === "number" && calculatedPrice > 0) {
+      basePrice = calculatedPrice;
+    } else if (isPromo && (isRegular || isTeacher)) {
+      // Ajuste dinámico de tarifa DF para bonos promo genéricos
+      if (bono.id === "promo_sep_4" || bono.id.includes("4")) basePrice = 25.0;
+      if (bono.id === "promo_sep_8" || bono.id.includes("8")) basePrice = 35.0;
+      if (bono.id === "promo_sep_12" || bono.id.includes("12")) basePrice = 45.0;
+    }
+
+    // El descuento docente del 10% aplica solo a tarifas regulares, no a las promos que ya tienen súper descuento
+    const unitAmount =
+      !isPromo && isTeacher
+        ? Math.round(basePrice * 0.9 * 100)
+        : Math.round(basePrice * 100);
 
     const matriculaCents = chargeMatricula ? 1500 : 0;
     const totalCents = unitAmount + matriculaCents;
@@ -207,6 +343,7 @@ export async function POST(req: NextRequest) {
       clasesCount: bono.clasesCount,
       isTeacher: isTeacher ? "true" : "false",
       isRegularStudent: isRegular ? "true" : "false",
+      isPromo: isPromo ? "true" : "false",
       isFirstBono: chargeMatricula ? "true" : "false",
       matriculaCost: chargeMatricula ? "15.00" : "0.00",
       totalAmount: totalEurosStr,
@@ -259,6 +396,10 @@ export async function POST(req: NextRequest) {
       order,
       merchantParamsB64,
     });
+
+    console.log(
+      `[Redsys Create Payment] Bono=${bono.nombre}, Base=${basePrice}€, Matrícula=${chargeMatricula ? "15€" : "0€"}, Total=${totalEurosStr}€ (Order: ${order})`
+    );
 
     return NextResponse.json({
       success: true,
