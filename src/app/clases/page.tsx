@@ -1213,7 +1213,7 @@ function ClasesContent() {
 
         {/* TAB 3: COMPRAR BONO */}
         {activeTab === "bonos" && (
-          <main className="p-6 space-y-4">
+          <main className="p-4 sm:p-6 space-y-4">
             <div className="p-4 rounded-2xl bg-[var(--color-secondary)]/10 border border-[var(--color-secondary)]/30 text-xs text-[var(--color-text-secondary)] space-y-1 shadow-lg">
               <h2 className="text-sm font-bold text-white tracking-wide flex items-center gap-2">
                 <span>🎟️</span>
@@ -1226,39 +1226,41 @@ function ClasesContent() {
 
             {/* --- PROMO OPEN CLASS • SOLO SEPTIEMBRE 2026 --- */}
             {isPromoSeptiembreActive() && (
-              <div className="relative rounded-3xl p-5 sm:p-6 bg-gradient-to-br from-amber-500/15 via-purple-950/30 to-black border-2 border-amber-500/40 shadow-2xl overflow-hidden space-y-4">
+              <div className="relative rounded-3xl p-4 sm:p-6 bg-gradient-to-br from-amber-500/15 via-purple-950/30 to-black border-2 border-amber-500/40 shadow-2xl overflow-hidden space-y-4">
                 {/* Decorative background glow */}
                 <div className="absolute -top-24 -right-24 w-48 h-48 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
                 <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-purple-600/15 rounded-full blur-3xl pointer-events-none" />
 
                 {/* Header Promo */}
-                <div className="flex items-start justify-between gap-3 flex-wrap relative z-10">
-                  <div>
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-black uppercase tracking-widest mb-2 shadow-sm">
+                <div className="space-y-2 relative z-10">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-black uppercase tracking-widest shadow-sm">
                       <Sparkles size={12} className="text-amber-400 animate-pulse" />
                       <span>PROMO OPEN CLASS • SOLO SEPTIEMBRE</span>
                     </div>
-                    <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
-                      <span>Tarifas Especiales de Septiembre</span>
-                    </h2>
-                    <p className="text-xs text-slate-300 mt-1">
-                      Promoción oficial válida del <strong className="text-white">9 al 30 de Septiembre de 2026</strong>.
-                    </p>
+
+                    {/* Badge Matrícula Gratuita */}
+                    <div className="px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center gap-1.5">
+                      <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                      <span className="text-[11px] font-black text-emerald-300">
+                        Matrícula 0,00 € (Gratis)
+                      </span>
+                    </div>
                   </div>
 
-                  {/* Badge Matrícula Gratuita */}
-                  <div className="px-3.5 py-2 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-right shrink-0">
-                    <span className="text-[10px] font-bold text-emerald-300 block uppercase tracking-wider">Ventaja Especial</span>
-                    <span className="text-sm font-black text-white flex items-center gap-1 justify-end">
-                      <CheckCircle2 size={16} className="text-emerald-400" />
-                      Matrícula 0,00 € (Gratis)
-                    </span>
+                  <div>
+                    <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                      Tarifas Especiales de Septiembre
+                    </h2>
+                    <p className="text-xs text-slate-300 mt-0.5">
+                      Promoción oficial válida del <strong className="text-white">9 al 30 de Septiembre de 2026</strong>.
+                    </p>
                   </div>
                 </div>
 
                 {/* Aviso oficial del cartel */}
-                <div className="p-3 rounded-xl bg-black/50 border border-white/10 flex items-center gap-2.5 text-xs text-amber-200/90 relative z-10">
-                  <Info size={16} className="text-amber-400 shrink-0" />
+                <div className="p-3 rounded-2xl bg-black/50 border border-white/10 flex items-start gap-2.5 text-xs text-amber-200/90 relative z-10 leading-relaxed">
+                  <Info size={16} className="text-amber-400 shrink-0 mt-0.5" />
                   <span>
                     Las clases de estos bonos se pueden utilizar hasta el <strong>30 de septiembre de 2026</strong> en las Open Class de Studio 2 (Paseo de Castilla, 41).
                   </span>
@@ -1266,14 +1268,14 @@ function ClasesContent() {
 
                 {/* Selector de Colectivo: Alumnos DF vs No Alumnos */}
                 <div className="space-y-2 relative z-10">
-                  <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center justify-between text-xs flex-wrap gap-1">
                     <span className="text-slate-300 font-semibold">Selecciona tu categoría:</span>
                     {isStudentAlumnoDF ? (
-                      <span className="text-[11px] font-bold text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/25">
+                      <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/25">
                         ✓ Detectado: Alumno DF
                       </span>
                     ) : (
-                      <span className="text-[11px] font-bold text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded-full border border-amber-500/25">
+                      <span className="text-[10px] font-bold text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded-full border border-amber-500/25">
                         Tarifa de Bienvenida (No Alumno)
                       </span>
                     )}
@@ -1283,32 +1285,32 @@ function ClasesContent() {
                     <button
                       type="button"
                       onClick={() => setPromoCategory("alumno")}
-                      className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center ${
+                      className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center text-center ${
                         promoCategory === "alumno"
                           ? "bg-[var(--color-secondary)] text-slate-950 shadow-lg shadow-[var(--color-secondary)]/30"
                           : "text-slate-400 hover:text-white"
                       }`}
                     >
-                      <span className="uppercase tracking-wider">Alumnos DF</span>
-                      <span className="text-[10px] opacity-90 font-normal">Precio Exclusivo Alumnos</span>
+                      <span className="uppercase tracking-wider font-extrabold text-[11px] sm:text-xs">Alumnos DF</span>
+                      <span className="text-[9px] sm:text-[10px] opacity-90 font-medium">Precio Exclusivo</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setPromoCategory("no_alumno")}
-                      className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center ${
+                      className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center text-center ${
                         promoCategory === "no_alumno"
                           ? "bg-[var(--color-secondary)] text-slate-950 shadow-lg shadow-[var(--color-secondary)]/30"
                           : "text-slate-400 hover:text-white"
                       }`}
                     >
-                      <span className="uppercase tracking-wider">No Alumnos</span>
-                      <span className="text-[10px] opacity-90 font-normal">Tarifa de Bienvenida</span>
+                      <span className="uppercase tracking-wider font-extrabold text-[11px] sm:text-xs">No Alumnos</span>
+                      <span className="text-[9px] sm:text-[10px] opacity-90 font-medium">Tarifa de Bienvenida</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Grid de las 3 tarjetas de bonos de la promoción */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1 relative z-10">
+                {/* Lista de Tarjetas de Bonos: 1 Columna adaptada al 100% en móvil y desktop */}
+                <div className="flex flex-col gap-3.5 pt-1 relative z-10">
                   {PROMO_SEPTIEMBRE_BONOS.map((promo) => {
                     const isAlumno = promoCategory === "alumno";
                     const price = isAlumno ? promo.precioAlumno : promo.precioNoAlumno;
@@ -1318,67 +1320,74 @@ function ClasesContent() {
                     return (
                       <div
                         key={promo.id}
-                        className={`relative rounded-2xl p-4 bg-black/70 border transition-all flex flex-col justify-between ${
+                        className={`relative rounded-2xl p-4 sm:p-5 bg-black/75 border transition-all flex flex-col justify-between gap-3 overflow-hidden ${
                           isPopular 
-                            ? "border-amber-500/60 shadow-lg shadow-amber-500/15 ring-1 ring-amber-500/30" 
-                            : "border-white/10 hover:border-white/25"
+                            ? "border-amber-500/70 shadow-xl shadow-amber-500/10 ring-1 ring-amber-500/40" 
+                            : "border-white/15 hover:border-amber-500/30"
                         }`}
                       >
-                        {isPopular && (
-                          <div className="absolute -top-2.5 right-4 px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[9px] font-black uppercase tracking-wider shadow">
-                            Más Recomendado
-                          </div>
-                        )}
-
-                        <div>
-                          <div className="flex justify-between items-start mb-2">
-                            <div>
-                              <span className="text-xs font-bold text-amber-400 block uppercase tracking-wider">
-                                {promo.clasesCount} Clases
-                              </span>
-                              <h3 className="text-base font-extrabold text-white">
-                                {promo.nombre}
-                              </h3>
-                            </div>
-                            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                              Ahorras {savings}€
+                        {/* Cabecera de la tarjeta: Badges y Ahorro */}
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="px-2.5 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[11px] font-black uppercase tracking-wider">
+                              {promo.clasesCount} Clases
                             </span>
-                          </div>
-
-                          {/* Precio */}
-                          <div className="my-3 pb-3 border-b border-white/10">
-                            <div className="flex items-baseline gap-2">
-                              <span className="text-3xl font-black font-mono text-white">
-                                {price.toFixed(2).replace(".", ",")} €
+                            {isPopular && (
+                              <span className="px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 text-[10px] font-black uppercase tracking-wider shadow">
+                                ★ Más Recomendado
                               </span>
-                              <span className="text-xs text-slate-500 line-through font-mono">
-                                {promo.precioHabitual.toFixed(2).replace(".", ",")} €
+                            )}
+                            {promo.clasesCount === 12 && (
+                              <span className="px-2 py-0.5 rounded-md bg-purple-500/30 border border-purple-400/40 text-purple-200 text-[10px] font-bold uppercase tracking-wider">
+                                Máximo Ahorro
                               </span>
-                            </div>
-                            <span className="text-[11px] text-emerald-400 font-semibold block mt-1">
-                              ✓ Matrícula 0,00 € Gratuita
-                            </span>
-                            <span className="text-[10px] text-slate-400 block mt-0.5">
-                              (Sin cuota de inscripción anual de 15€)
-                            </span>
+                            )}
                           </div>
-
-                          <ul className="text-xs text-slate-300 space-y-1.5 mb-4">
-                            <li className="flex items-center gap-1.5">
-                              <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
-                              <span>{promo.clasesCount} sesiones en Open Class</span>
-                            </li>
-                            <li className="flex items-center gap-1.5">
-                              <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
-                              <span>Studio 2 (Paseo Castilla, 41)</span>
-                            </li>
-                            <li className="flex items-center gap-1.5">
-                              <Clock size={13} className="text-amber-400 shrink-0" />
-                              <span>Válido hasta el 30 de Septiembre</span>
-                            </li>
-                          </ul>
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[11px] font-bold">
+                            Ahorras {savings} €
+                          </span>
                         </div>
 
+                        {/* Nombre del bono y Precio en una fila limpia */}
+                        <div className="flex items-baseline justify-between gap-3 border-b border-white/10 pb-3">
+                          <div className="min-w-0 flex-1">
+                            <h3 className="text-base sm:text-lg font-black text-white tracking-wide">
+                              {promo.nombre}
+                            </h3>
+                            <span className="text-[11px] text-slate-400 block mt-0.5">
+                              Open Class en Studio 2 (Paseo Castilla, 41)
+                            </span>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            <div className="text-2xl sm:text-3xl font-black font-mono text-white">
+                              {price.toFixed(2).replace(".", ",")} €
+                            </div>
+                            <span className="text-[11px] text-slate-500 line-through font-mono block">
+                              Habitual: {promo.precioHabitual.toFixed(2).replace(".", ",")} €
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Ventajas y Fechas */}
+                        <div className="space-y-1.5 text-xs text-slate-300">
+                          <div className="flex items-center justify-between text-[11px] text-emerald-400 font-semibold bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1.5 rounded-xl flex-wrap gap-1">
+                            <span className="flex items-center gap-1.5">
+                              <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                              <span>Matrícula 0,00 € Gratuita</span>
+                            </span>
+                            <span className="text-[10px] text-emerald-300/80 font-normal">
+                              (Ahorras 15€ de inscripción)
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 text-[11px] text-slate-300 pt-0.5">
+                            <Clock size={13} className="text-amber-400 shrink-0" />
+                            <span>Válido para asistir a clases hasta el <strong>30 de septiembre</strong></span>
+                          </div>
+                        </div>
+
+                        {/* Botón de Compra */}
                         <button
                           type="button"
                           onClick={() => {
@@ -1392,10 +1401,10 @@ function ClasesContent() {
                             };
                             setSelectedBonoForPayment(promoBono);
                           }}
-                          className="w-full py-2.5 px-4 rounded-xl text-xs font-extrabold bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 transition-all shadow-md shadow-amber-500/20 active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                          className="w-full py-3 px-4 rounded-xl text-xs sm:text-sm font-black bg-gradient-to-r from-amber-400 via-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 transition-all shadow-lg shadow-amber-500/20 active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer mt-0.5"
                         >
-                          <Sparkles size={14} />
-                          <span>Comprar Promo ({price} €) • 0€ Matrícula</span>
+                          <Sparkles size={15} />
+                          <span>Comprar Promo ({price.toFixed(2).replace(".", ",")} €) • 0€ Matrícula</span>
                         </button>
                       </div>
                     );
