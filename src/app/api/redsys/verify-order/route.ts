@@ -110,29 +110,30 @@ export async function GET(req: NextRequest) {
               await supabase.from("alumnos").update({
                 clases_restantes: newBal,
                 plan_activo: bonoName,
-                bono_caducidad: expISO,
-                matricula_pagada: true,
-                matricula_fecha: new Date().toISOString().split("T")[0],
               }).eq("id", targetUUID);
             }
 
             const validStudentId = isValidUUID(targetUUID) ? targetUUID : null;
-            const { data: newPago } = await supabase.from("pagos").insert([{
-              numero_recibo: `TPV-${order}`,
-              fecha_hora: new Date().toISOString(),
-              alumno_id: validStudentId,
-              alumno_nombre: studentToUpdate?.nombre_completo || metadata.studentName || "Alumno Online",
-              concepto: `${bonoName} (TPV CaixaBank)`,
-              categoria: "bono",
-              importe: parseFloat(amountEuros),
-              metodo_pago: "TPV",
-              sede: "castilla",
-              atendido_por: "TPV Virtual Redsys (Retorno)",
-              notas: `Aut: ${authCode} | Pedido: ${order}`,
-              estado: "Cobrado",
-            }]).select().maybeSingle();
+            try {
+              const { data: newPago } = await supabase.from("pagos").insert([{
+                numero_recibo: `TPV-${order}`,
+                fecha_hora: new Date().toISOString(),
+                alumno_id: validStudentId,
+                alumno_nombre: studentToUpdate?.nombre_completo || metadata.studentName || "Alumno Online",
+                concepto: `${bonoName} (TPV CaixaBank)`,
+                categoria: "bono",
+                importe: parseFloat(amountEuros),
+                metodo_pago: "TPV",
+                sede: "castilla",
+                atendido_por: "TPV Virtual Redsys (Retorno)",
+                notas: `Aut: ${authCode} | Pedido: ${order}`,
+                estado: "Cobrado",
+              }]).select().maybeSingle();
 
-            pagoData = newPago;
+              pagoData = newPago;
+            } catch (pagoErr) {
+              console.warn("[Redsys Verify Order] Pagos table insert skipped:", pagoErr);
+            }
           }
         }
       } catch (browserVerifyErr) {
@@ -146,7 +147,7 @@ export async function GET(req: NextRequest) {
     if (studentId && isValidUUID(studentId)) {
       const { data } = await supabase
         .from("alumnos")
-        .select("id, nombre_completo, clases_restantes, plan_activo, matricula_pagada, bono_caducidad")
+        .select("id, nombre_completo, clases_restantes, plan_activo")
         .eq("id", studentId)
         .maybeSingle();
       studentData = data;
@@ -155,7 +156,7 @@ export async function GET(req: NextRequest) {
     if (!studentData && studentEmail) {
       const { data } = await supabase
         .from("alumnos")
-        .select("id, nombre_completo, clases_restantes, plan_activo, matricula_pagada, bono_caducidad")
+        .select("id, nombre_completo, clases_restantes, plan_activo")
         .ilike("email", studentEmail.trim().toLowerCase())
         .maybeSingle();
       studentData = data;

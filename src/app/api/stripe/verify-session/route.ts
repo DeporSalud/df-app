@@ -54,15 +54,43 @@ export async function POST(req: NextRequest) {
       try {
         const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
         if (pi.metadata?.processed === "true") {
-          // Already processed! Return current balance safely without re-adding
+          // Check student balance in DB
           let currentBalance = 0;
+          let existingStudent: any = null;
+
           if (studentId) {
-            const { data: currentDbStudent } = await supabase
+            const { data } = await supabase
               .from("alumnos")
-              .select("clases_restantes")
+              .select("id, clases_restantes, plan_activo")
               .eq("id", studentId)
               .maybeSingle();
-            currentBalance = currentDbStudent?.clases_restantes ?? 0;
+            existingStudent = data;
+          }
+
+          const resolvedEmail = studentEmail || session.customer_details?.email;
+          if (!existingStudent && resolvedEmail) {
+            const { data } = await supabase
+              .from("alumnos")
+              .select("id, clases_restantes, plan_activo")
+              .ilike("email", resolvedEmail.trim().toLowerCase())
+              .maybeSingle();
+            existingStudent = data;
+          }
+
+          currentBalance = existingStudent?.clases_restantes ?? 0;
+
+          // Self-healing: if PaymentIntent was marked processed but student ended up with 0 classes, credit them now!
+          if (existingStudent && currentBalance === 0) {
+            const healedBalance = isUnlimited ? 999 : count;
+            const healedPlan = bonoName || "Bono de Clases";
+            await supabase
+              .from("alumnos")
+              .update({
+                plan_activo: healedPlan,
+                clases_restantes: healedBalance,
+              })
+              .eq("id", existingStudent.id);
+            currentBalance = healedBalance;
           }
 
           return NextResponse.json({
@@ -77,13 +105,8 @@ export async function POST(req: NextRequest) {
             receiptUrl: (session as any).receipt_url || null,
           });
         }
-
-        // Mark as processed in Stripe before updating database
-        await stripe.paymentIntents.update(paymentIntentId, {
-          metadata: { processed: "true", studentId: studentId || "", bonoId: bonoId || "" }
-        });
       } catch (stripeErr) {
-        console.warn("[Stripe Verify] Could not check/update PaymentIntent metadata:", stripeErr);
+        console.warn("[Stripe Verify] Could not check PaymentIntent metadata:", stripeErr);
       }
     }
 
@@ -114,46 +137,37 @@ export async function POST(req: NextRequest) {
       const currentBalance = typeof student.clases_restantes === "number" ? student.clases_restantes : 0;
       updatedBalance = isUnlimited ? 999 : currentBalance + count;
 
-      // Calcular fecha de caducidad
-      const isPromo = isPromoSeptiembreBono(bonoId) || isPromoSeptiembreBono(bonoName) || session.metadata?.isPromoSeptiembre === "true";
-      let bonoCaducidadISO: string;
-      if (isPromo) {
-        bonoCaducidadISO = "2026-09-30T23:59:59.000Z";
-      } else {
-        const expDate = new Date();
-        expDate.setMonth(expDate.getMonth() + 1);
-        bonoCaducidadISO = expDate.toISOString();
-      }
-
-      // Actualizar en Supabase con tolerancia a fallos si la columna no existe aún
-      const updatePayload: Record<string, any> = {
-        plan_activo: bonoName || "Bono de Clases",
-        clases_restantes: updatedBalance,
-        bono_caducidad: bonoCaducidadISO,
-      };
-      if (isFirstBono === "true" || isPromo) {
-        updatePayload.matricula_pagada = true;
-        updatePayload.matricula_fecha = new Date().toISOString().split("T")[0];
-      }
-
+      // Update in Supabase: strictly target existing columns (plan_activo, clases_restantes)
       const { error: updateErr } = await supabase
         .from("alumnos")
-        .update(updatePayload)
+        .update({
+          plan_activo: bonoName || "Bono de Clases",
+          clases_restantes: updatedBalance,
+        })
         .eq("id", targetStudentId);
 
       if (updateErr) {
-        console.warn("[Stripe Verify] Fallback sin bono_caducidad:", updateErr.message);
-        const fallbackPayload: Record<string, any> = {
-          plan_activo: bonoName || "Bono de Clases",
-          clases_restantes: updatedBalance,
-        };
-        if (isFirstBono === "true" || isPromo) {
-          fallbackPayload.matricula_pagada = true;
+        console.error("[Stripe Verify] Error updating student in Supabase:", updateErr);
+        return NextResponse.json(
+          { success: false, error: `Error actualizando clases en Supabase: ${updateErr.message}` },
+          { status: 500 }
+        );
+      }
+
+      // Mark as processed in Stripe ONLY AFTER Supabase successfully updated
+      if (paymentIntentId) {
+        try {
+          await stripe.paymentIntents.update(paymentIntentId, {
+            metadata: {
+              processed: "true",
+              studentId: targetStudentId || "",
+              bonoId: bonoId || "",
+              updatedBalance: String(updatedBalance),
+            },
+          });
+        } catch (stripeErr) {
+          console.warn("[Stripe Verify] Could not update PaymentIntent metadata:", stripeErr);
         }
-        await supabase
-          .from("alumnos")
-          .update(fallbackPayload)
-          .eq("id", targetStudentId);
       }
     }
 

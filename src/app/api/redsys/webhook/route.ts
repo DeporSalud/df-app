@@ -150,7 +150,7 @@ export async function POST(req: NextRequest) {
     if (studentId && isValidUUID(studentId)) {
       const { data } = await supabase
         .from("alumnos")
-        .select("id, nombre_completo, email, clases_restantes, plan_activo, matricula_pagada")
+        .select("id, nombre_completo, email, clases_restantes, plan_activo")
         .eq("id", studentId)
         .maybeSingle();
       student = data;
@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
     if (!student && studentEmail) {
       const { data } = await supabase
         .from("alumnos")
-        .select("id, nombre_completo, email, clases_restantes, plan_activo, matricula_pagada")
+        .select("id, nombre_completo, email, clases_restantes, plan_activo")
         .ilike("email", studentEmail.trim().toLowerCase())
         .maybeSingle();
       student = data;
@@ -189,13 +189,7 @@ export async function POST(req: NextRequest) {
       const updatePayload: Record<string, any> = {
         plan_activo: bonoName || "Bono de Clases",
         clases_restantes: updatedBalance,
-        bono_caducidad: bonoCaducidadISO,
       };
-
-      if (isFirstBono === "true" || isFirstBono === true || isPromo) {
-        updatePayload.matricula_pagada = true;
-        updatePayload.matricula_fecha = new Date().toISOString().split("T")[0];
-      }
 
       const { error: updateErr } = await supabase
         .from("alumnos")
@@ -203,19 +197,7 @@ export async function POST(req: NextRequest) {
         .eq("id", targetStudentId);
 
       if (updateErr) {
-        console.warn("[Redsys Webhook] Fallback actualización alumno:", updateErr.message);
-        // Reintento con campos mínimos
-        const fallbackPayload: Record<string, any> = {
-          plan_activo: bonoName || "Bono de Clases",
-          clases_restantes: updatedBalance,
-        };
-        if (isFirstBono === "true" || isFirstBono === true) {
-          fallbackPayload.matricula_pagada = true;
-        }
-        await supabase
-          .from("alumnos")
-          .update(fallbackPayload)
-          .eq("id", targetStudentId);
+        console.warn("[Redsys Webhook] Error actualización alumno:", updateErr.message);
       }
 
       console.log(
@@ -229,9 +211,6 @@ export async function POST(req: NextRequest) {
           email: studentEmail.trim().toLowerCase(),
           clases_restantes: isUnlimited ? 999 : count,
           plan_activo: bonoName || "Bono de Clases",
-          bono_caducidad: bonoCaducidadISO,
-          matricula_pagada: true,
-          matricula_fecha: new Date().toISOString().split("T")[0],
           sede: "castilla",
           estado: "Activo"
         };
