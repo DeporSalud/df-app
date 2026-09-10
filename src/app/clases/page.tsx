@@ -46,7 +46,9 @@ import {
   normalizeSede,
   formatSedeName,
   getSesionReservasCount,
-  isSesionCompleta
+  isSesionCompleta,
+  normalizeClaseId,
+  DEFAULT_STUDIO2_OPEN_CLASSES
 } from "@/lib/openClassService";
 import { 
   calculateBonoPriceAndMatricula, 
@@ -55,81 +57,6 @@ import {
   PROMO_SEPTIEMBRE_BONOS, 
   isRegularClassStudent 
 } from "@/lib/matriculaService";
-
-const DEFAULT_STUDIO2_OPEN_CLASSES = [
-  {
-    id: "oc_lunes_1",
-    nombre_clase: "OPEN CLASS COMERCIAL",
-    profesor: "Andrea Soto",
-    dia_semana: "LUNES",
-    hora_inicio: "19:00",
-    hora_fin: "20:00",
-    sede: "castilla",
-    sala: "Sala 1",
-    aforo_maximo: 20,
-    tipo_clase: "Open Class"
-  },
-  {
-    id: "oc_lunes_2",
-    nombre_clase: "OPEN CLASS COMERCIAL",
-    profesor: "Nil Barberá",
-    dia_semana: "LUNES",
-    hora_inicio: "20:00",
-    hora_fin: "21:00",
-    sede: "castilla",
-    sala: "Sala 1",
-    aforo_maximo: 20,
-    tipo_clase: "Open Class"
-  },
-  {
-    id: "oc_martes_1",
-    nombre_clase: "OPEN CLASS HEELS",
-    profesor: "Nerea Olivares",
-    dia_semana: "MARTES",
-    hora_inicio: "19:30",
-    hora_fin: "20:45",
-    sede: "castilla",
-    sala: "Sala 1",
-    aforo_maximo: 20,
-    tipo_clase: "Open Class"
-  },
-  {
-    id: "oc_miercoles_1",
-    nombre_clase: "OPEN CLASS URBAN",
-    profesor: "Alejandro Rovina",
-    dia_semana: "MIÉRCOLES",
-    hora_inicio: "19:00",
-    hora_fin: "20:00",
-    sede: "castilla",
-    sala: "Sala 1",
-    aforo_maximo: 20,
-    tipo_clase: "Open Class"
-  },
-  {
-    id: "oc_miercoles_2",
-    nombre_clase: "OPEN CLASS COMERCIAL",
-    profesor: "Mario Gadea",
-    dia_semana: "MIÉRCOLES",
-    hora_inicio: "20:00",
-    hora_fin: "21:00",
-    sede: "castilla",
-    sala: "Sala 1",
-    aforo_maximo: 20,
-    tipo_clase: "Open Class"
-  },
-  {
-    id: "oc_jueves_1",
-    nombre_clase: "FORMACIÓN ROTATIVA",
-    profesor: "Formación Rotativa",
-    dia_semana: "JUEVES",
-    hora_inicio: "20:30",
-    hora_fin: "21:45",
-    sede: "castilla",
-    sala: "Sala 1",
-    aforo_maximo: 20,
-    tipo_clase: "Open Class"
-  }
-];
 
 function ClasesContent() {
   const router = useRouter();
@@ -436,9 +363,10 @@ function ClasesContent() {
 
     // 3. Register enrollment in alumnos_clases as well
     try {
+      const classUUID = normalizeClaseId(clase.id);
       await supabase.from("alumnos_clases").insert([{
         alumno_id: currentStudent.id,
-        clase_id: clase.id
+        clase_id: classUUID
       }]);
     } catch (e) {
       // Ignored if duplicate

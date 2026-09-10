@@ -30,7 +30,8 @@ import {
   getReservasAlumno, 
   cancelarReservaOpenClass, 
   OpenClassReserva, 
-  formatSedeName 
+  formatSedeName,
+  normalizeClaseId
 } from "@/lib/openClassService";
 
 export default function MisClasesPage() {
@@ -128,15 +129,16 @@ export default function MisClasesPage() {
     // 3. Delete from alumnos_clases only if no other active reservations remain for this class
     try {
       if (reserva.clase_id && currentStudent.id) {
+        const targetClassId = normalizeClaseId(reserva.clase_id);
         const otherActive = getReservasAlumno(currentStudent.id).filter(
-          r => r.clase_id === reserva.clase_id && r.id !== reserva.id && (r.estado === "Confirmada" || r.estado === "Asistida")
+          r => normalizeClaseId(r.clase_id) === targetClassId && r.id !== reserva.id && (r.estado === "Confirmada" || r.estado === "Asistida")
         );
         if (otherActive.length === 0) {
           await supabase
             .from("alumnos_clases")
             .delete()
             .eq("alumno_id", currentStudent.id)
-            .eq("clase_id", reserva.clase_id);
+            .eq("clase_id", targetClassId);
         }
       }
     } catch (e) {
