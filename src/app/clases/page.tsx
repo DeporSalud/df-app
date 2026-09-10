@@ -473,28 +473,39 @@ function ClasesContent() {
   const verifiedSessionIdRef = useState<{ current: string | null }>({ current: null })[0];
 
   // Comprobar si se activa la opción de TPV:
-  // EXCLUSIVO para el alumno Fran Sarciat mientras se realizan las pruebas de certificación
+  // EXCLUSIVO para Fran Sarciat, Lucía Zamorano y Enrique Zamorano mientras se realizan las pruebas
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
-    const isFranSarciat = Boolean(
+    const studentName = (currentStudent?.nombre_completo || "").toLowerCase();
+    const studentEmail = (currentStudent?.email || "").toLowerCase();
+
+    const isAllowedTester = Boolean(
       currentStudent && (
-        (currentStudent.nombre_completo && currentStudent.nombre_completo.toLowerCase().includes("sarciat")) ||
-        (currentStudent.nombre_completo && currentStudent.nombre_completo.toLowerCase().includes("fran")) ||
-        (currentStudent.email && currentStudent.email.toLowerCase().includes("sarciat")) ||
-        (currentStudent.email && currentStudent.email.toLowerCase().includes("fransarciat")) ||
-        currentStudent.id === "demo_fran"
+        // Fran Sarciat
+        studentName.includes("sarciat") ||
+        studentName.includes("fran") ||
+        studentEmail.includes("sarciat") ||
+        studentEmail.includes("fran") ||
+        currentStudent.id === "demo_fran" ||
+        // Lucía Zamorano y Enrique Zamorano (Familia Zamorano / Dirección)
+        studentName.includes("zamorano") ||
+        studentEmail.includes("zamorano") ||
+        studentEmail.includes("lucia.zamorano") ||
+        studentEmail.includes("enrique.zamorano") ||
+        currentStudent.id === "1002" || // ID profesor/alumno Lucía Zamorano
+        currentStudent.id === "9999"    // ID Enrique Zamorano
       )
     );
 
     if (
-      isFranSarciat ||
+      isAllowedTester ||
       process.env.NEXT_PUBLIC_ENABLE_REDSYS === "true" ||
       params.get("tpv_test") === "true" ||
       params.get("dev_tpv") === "true"
     ) {
       setShowTpvOption(true);
-      // Preseleccionar la pestaña TPV para Fran Sarciat para máxima comodidad
+      // Preseleccionar la pestaña TPV para el tester para máxima comodidad
       setPaymentMethodTab("tpv");
     } else {
       setShowTpvOption(false);
