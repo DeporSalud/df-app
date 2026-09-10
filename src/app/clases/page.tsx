@@ -526,22 +526,35 @@ function ClasesContent() {
       if (verifiedSessionIdRef.current === order) return;
       verifiedSessionIdRef.current = order;
 
+      const merchantParams = params.get("Ds_MerchantParameters") || "";
+      const signature = params.get("Ds_Signature") || "";
+
       try {
         const cleanUrl = new URL(window.location.href);
         cleanUrl.searchParams.delete("payment");
         cleanUrl.searchParams.delete("order");
+        cleanUrl.searchParams.delete("Ds_SignatureVersion");
+        cleanUrl.searchParams.delete("Ds_MerchantParameters");
+        cleanUrl.searchParams.delete("Ds_Signature");
         window.history.replaceState({}, "", cleanUrl.pathname + (cleanUrl.search || ""));
       } catch (e) {}
 
       const verifyRedsysPayment = async () => {
         try {
-          const res = await fetch(`/api/redsys/verify-order?order=${order}&studentId=${currentStudent?.id || ""}`);
+          const queryParams = new URLSearchParams({
+            order,
+            studentId: currentStudent?.id || "",
+            studentEmail: currentStudent?.email || "",
+            merchantParams,
+            signature,
+          });
+          const res = await fetch(`/api/redsys/verify-order?${queryParams.toString()}`);
           const data = await res.json();
           if (refetchStudents) await refetchStudents();
           setModal({
             isOpen: true,
             title: "🎉 ¡Pago con TPV CaixaBank Completado!",
-            message: `Tu operación (Pedido ${order}) ha sido procesada con éxito por la pasarela de CaixaBank.\n\nTu saldo ha sido actualizado a ${data.updatedBalance === 999 ? "Ilimitado" : `${data.updatedBalance ?? "tus"} clases`} disponibles para reservar en el calendario.`,
+            message: `Tu operación (Pedido ${order}) ha sido procesada con éxito por CaixaBank Cyberpac.\n\n${data.bonoName ? `Has adquirido: ${data.bonoName}\n` : ""}Tu saldo ha sido actualizado a ${data.updatedBalance === 999 ? "Ilimitado" : `${data.updatedBalance ?? "tus"} clases`} disponibles para reservar en el calendario.`,
             type: "success",
             confirmText: "Reservar en Calendario",
             onConfirm: () => {

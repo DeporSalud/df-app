@@ -211,6 +211,11 @@ export async function POST(req: NextRequest) {
     let isAlreadyPaid = false;
     let studentVerifiedInDb = false;
 
+function isValidUUID(str?: string | null): boolean {
+  if (!str) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str.trim());
+}
+
     if (studentId || studentEmail) {
       try {
         const { createClient } = await import("@supabase/supabase-js");
@@ -223,7 +228,7 @@ export async function POST(req: NextRequest) {
         const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
         let dbStudent: any = null;
-        if (studentId) {
+        if (studentId && isValidUUID(studentId)) {
           const { data } = await supabase
             .from("alumnos")
             .select("*")
@@ -310,21 +315,26 @@ export async function POST(req: NextRequest) {
     // Determinar precio base del bono
     let basePrice = bono.precio;
 
-    // Si el cliente nos envió un precio calculado válido (ej. tarifa alumno vs no alumno)
-    if (typeof calculatedPrice === "number" && calculatedPrice > 0) {
-      basePrice = calculatedPrice;
-    } else if (isPromo && (isRegular || isTeacher)) {
-      // Ajuste dinámico de tarifa DF para bonos promo genéricos
+    // Ajuste dinámico de tarifa DF para bonos promo genéricos
+    if (isPromo && (isRegular || isTeacher)) {
       if (bono.id === "promo_sep_4" || bono.id.includes("4")) basePrice = 25.0;
       if (bono.id === "promo_sep_8" || bono.id.includes("8")) basePrice = 35.0;
       if (bono.id === "promo_sep_12" || bono.id.includes("12")) basePrice = 45.0;
     }
 
-    // El descuento docente del 10% aplica solo a tarifas regulares, no a las promos que ya tienen súper descuento
-    const unitAmount =
-      !isPromo && isTeacher
-        ? Math.round(basePrice * 0.9 * 100)
-        : Math.round(basePrice * 100);
+    // Calcular precio unitario sin duplicar el descuento docente
+    let unitAmount: number;
+    if (typeof calculatedPrice === "number" && calculatedPrice > 0) {
+      // El cliente ya calculó el precio (con descuento si correspondía)
+      // Validamos que el precio calculado sea consistente para evitar manipulaciones
+      if (calculatedPrice >= basePrice * 0.85 && calculatedPrice <= basePrice * 1.05) {
+        unitAmount = Math.round(calculatedPrice * 100);
+      } else {
+        unitAmount = isTeacher ? Math.round(basePrice * 0.90 * 100) : Math.round(basePrice * 100);
+      }
+    } else {
+      unitAmount = isTeacher ? Math.round(basePrice * 0.90 * 100) : Math.round(basePrice * 100);
+    }
 
     const matriculaCents = chargeMatricula ? 1500 : 0;
     const totalCents = unitAmount + matriculaCents;

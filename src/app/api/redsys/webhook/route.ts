@@ -90,6 +90,22 @@ export async function POST(req: NextRequest) {
       return new NextResponse("OK", { status: 200 });
     }
 
+    // 2.1 Evitar duplicados (Idempotencia)
+    try {
+      const { data: existingPago } = await supabase
+        .from("pagos")
+        .select("id")
+        .ilike("numero_recibo", `%${order}%`)
+        .maybeSingle();
+
+      if (existingPago) {
+        console.log(`[Redsys Webhook] ⚠️ Pedido ${order} ya fue procesado con anterioridad. Confirmando 200 OK sin duplicar saldo.`);
+        return new NextResponse("OK", { status: 200 });
+      }
+    } catch (checkDupErr) {
+      console.warn("[Redsys Webhook] Warning comprobando duplicados:", checkDupErr);
+    }
+
     // 3. Extraer metadatos del alumno y bono desde Ds_MerchantData
     let metadata: any = {};
     if (params.Ds_MerchantData) {
@@ -122,11 +138,16 @@ export async function POST(req: NextRequest) {
     const count = parseInt(clasesCount || "4", 10);
     const isUnlimited = count >= 999;
 
-    // 4. Buscar alumno en Supabase
+    function isValidUUID(str?: string | null): boolean {
+      if (!str) return false;
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str.trim());
+    }
+
+    // 4. Buscar alumno en Supabase (con protección de sintaxis UUID)
     let student: any = null;
     let targetStudentId = studentId;
 
-    if (studentId) {
+    if (studentId && isValidUUID(studentId)) {
       const { data } = await supabase
         .from("alumnos")
         .select("id, nombre_completo, email, clases_restantes, plan_activo, matricula_pagada")
@@ -145,25 +166,25 @@ export async function POST(req: NextRequest) {
       if (student) targetStudentId = student.id;
     }
 
+    // Calcular fecha de caducidad
+    const isPromo =
+      isPromoSeptiembreBono(bonoId) ||
+      isPromoSeptiembreBono(bonoName) ||
+      metadata.isPromo === "true";
+
+    let bonoCaducidadISO: string;
+    if (isPromo) {
+      bonoCaducidadISO = "2026-09-30T23:59:59.000Z";
+    } else {
+      const expDate = new Date();
+      expDate.setMonth(expDate.getMonth() + 1);
+      bonoCaducidadISO = expDate.toISOString();
+    }
+
     if (student && targetStudentId) {
       const currentBalance =
         typeof student.clases_restantes === "number" ? student.clases_restantes : 0;
       const updatedBalance = isUnlimited ? 999 : currentBalance + count;
-
-      // Calcular fecha de caducidad
-      const isPromo =
-        isPromoSeptiembreBono(bonoId) ||
-        isPromoSeptiembreBono(bonoName) ||
-        metadata.isPromo === "true";
-
-      let bonoCaducidadISO: string;
-      if (isPromo) {
-        bonoCaducidadISO = "2026-09-30T23:59:59.000Z";
-      } else {
-        const expDate = new Date();
-        expDate.setMonth(expDate.getMonth() + 1);
-        bonoCaducidadISO = expDate.toISOString();
-      }
 
       const updatePayload: Record<string, any> = {
         plan_activo: bonoName || "Bono de Clases",
@@ -200,53 +221,84 @@ export async function POST(req: NextRequest) {
       console.log(
         `[Redsys Webhook] 💃 Alumno ${student.nombre_completo || targetStudentId} actualizado con éxito: +${count} clases (Saldo: ${updatedBalance})`
       );
-
-      // 5. Registrar transacción en la tabla pagos (si existe)
+    } else if (!student && studentEmail) {
+      // Si el alumno no existe en Supabase aún (ej. primera compra online), crearlo automáticamente
       try {
-        const metodoFinal = payType.toLowerCase().includes("bizum") ? "Bizum" : "TPV";
-        await supabase.from("pagos").insert([
-          {
-            numero_recibo: `TPV-${order}`,
-            fecha_hora: new Date().toISOString(),
-            alumno_id: targetStudentId,
-            alumno_nombre: student.nombre_completo || studentName || "Alumno Online",
-            concepto: `${bonoName || "Bono de Clases"} (TPV CaixaBank)`,
-            categoria: "bono",
-            importe: parseFloat(amountEuros),
-            metodo_pago: metodoFinal,
-            sede: "castilla", // Sede por defecto para ventas online
-            atendido_por: "TPV Virtual Redsys",
-            notas: `Aut: ${authCode} | Pedido: ${order}`,
-            estado: "Cobrado",
-          },
-        ]);
-      } catch (pagoErr) {
-        console.log("[Redsys Webhook] Info inserción pagos:", pagoErr);
-      }
+        const newStudentPayload = {
+          nombre_completo: studentName || "Alumno Online",
+          email: studentEmail.trim().toLowerCase(),
+          clases_restantes: isUnlimited ? 999 : count,
+          plan_activo: bonoName || "Bono de Clases",
+          bono_caducidad: bonoCaducidadISO,
+          matricula_pagada: true,
+          matricula_fecha: new Date().toISOString().split("T")[0],
+          sede: "castilla",
+          estado: "Activo"
+        };
+        const { data: createdStudent, error: createErr } = await supabase
+          .from("alumnos")
+          .insert([newStudentPayload])
+          .select()
+          .maybeSingle();
 
-      // 6. Registrar en registros de actividad
-      try {
-        await supabase.from("registros_actividad").insert([
-          {
-            id: "log_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
-            created_at: new Date().toISOString(),
-            origen: "alumno",
-            tipo_evento: "compra_bono_stripe", // Mantiene compatibilidad con filtros del CRM
-            descripcion: `Pago completado en TPV CaixaBank: ${bonoName || "Bono"} (${amountEuros}€, Pedido: ${order})`,
-            usuario_afectado: student.nombre_completo || studentName || targetStudentId,
-            detalles: JSON.stringify({
-              order,
-              authCode,
-              amount: amountEuros,
-              bonoName,
-              clasesCount: count,
-            }),
-            sede: "General",
-          },
-        ]);
-      } catch (logErr) {
-        // Silencioso
+        if (createdStudent) {
+          student = createdStudent;
+          targetStudentId = createdStudent.id;
+          console.log(`[Redsys Webhook] 🌟 Nuevo alumno registrado y activado: ${studentName} (${studentEmail})`);
+        } else if (createErr) {
+          console.warn("[Redsys Webhook] Info creación alumno:", createErr.message);
+        }
+      } catch (e) {
+        console.warn("[Redsys Webhook] Fallback creación alumno:", e);
       }
+    }
+
+    // 5. Registrar transacción en la tabla pagos SIEMPRE (Garantía financiera y de arqueo)
+    try {
+      const metodoFinal = payType.toLowerCase().includes("bizum") ? "Bizum" : "TPV";
+      const validStudentUUID = isValidUUID(targetStudentId) ? targetStudentId : null;
+      await supabase.from("pagos").insert([
+        {
+          numero_recibo: `TPV-${order}`,
+          fecha_hora: new Date().toISOString(),
+          alumno_id: validStudentUUID,
+          alumno_nombre: student?.nombre_completo || studentName || "Alumno Online",
+          concepto: `${bonoName || "Bono de Clases"} (TPV CaixaBank)`,
+          categoria: "bono",
+          importe: parseFloat(amountEuros),
+          metodo_pago: metodoFinal,
+          sede: "castilla", // Sede por defecto para ventas online
+          atendido_por: "TPV Virtual Redsys",
+          notas: `Aut: ${authCode} | Pedido: ${order}`,
+          estado: "Cobrado",
+        },
+      ]);
+    } catch (pagoErr) {
+      console.log("[Redsys Webhook] Info inserción pagos:", pagoErr);
+    }
+
+    // 6. Registrar en registros de actividad para visibilidad en CRM
+    try {
+      await supabase.from("registros_actividad").insert([
+        {
+          id: "log_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
+          created_at: new Date().toISOString(),
+          origen: "alumno",
+          tipo_evento: "compra_bono_stripe", // Mantiene compatibilidad con filtros del CRM
+          descripcion: `Pago completado en TPV CaixaBank: ${bonoName || "Bono"} (${amountEuros}€, Pedido: ${order})`,
+          usuario_afectado: student?.nombre_completo || studentName || studentEmail || "Alumno Online",
+          detalles: JSON.stringify({
+            order,
+            authCode,
+            amount: amountEuros,
+            bonoName,
+            clasesCount: count,
+          }),
+          sede: "General",
+        },
+      ]);
+    } catch (logErr) {
+      // Silencioso
     }
 
     // Redsys requiere estrictamente una respuesta HTTP 200 OK
