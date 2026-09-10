@@ -1,0 +1,277 @@
+import { NextRequest, NextResponse } from "next/server";
+import {
+  REDSYS_CONFIG,
+  createRedsysOrder,
+  createMerchantSignature,
+} from "@/lib/redsys";
+import {
+  isTeacherProfile,
+  isRegularClassStudent,
+  hasPaidSeasonMatricula,
+} from "@/lib/matriculaService";
+
+interface BonoDefinition {
+  id: string;
+  nombre: string;
+  precio: number;
+  clasesCount: number;
+  desc: string;
+}
+
+const BONOS_DATA: Record<string, BonoDefinition> = {
+  "Bono 4 clases": {
+    id: "Bono 4 clases",
+    nombre: "Bono 4 Clases",
+    precio: 45.0,
+    clasesCount: 4,
+    desc: "Válido para 4 clases de danza en Dance Factory",
+  },
+  "Bono 8 clases": {
+    id: "Bono 8 clases",
+    nombre: "Bono 8 Clases",
+    precio: 57.0,
+    clasesCount: 8,
+    desc: "Válido para 8 clases de danza en Dance Factory",
+  },
+  "Bono 10 clases": {
+    id: "Bono 10 clases",
+    nombre: "Bono 10 Clases",
+    precio: 79.0,
+    clasesCount: 10,
+    desc: "Válido para 10 clases de danza en Dance Factory",
+  },
+  "Mensualidad Ilimitada": {
+    id: "Mensualidad Ilimitada",
+    nombre: "Pase Mensual Ilimitado",
+    precio: 100.0,
+    clasesCount: 999,
+    desc: "Acceso ilimitado a clases de danza durante 30 días",
+  },
+  "Clase Suelta": {
+    id: "Clase Suelta",
+    nombre: "Clase Suelta Open Class",
+    precio: 15.0,
+    clasesCount: 1,
+    desc: "Entrada para 1 sesión de Open Class",
+  },
+};
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const {
+      bonoId,
+      studentId,
+      studentName,
+      studentEmail,
+      isFirstBonoOfYear,
+      isTeacher: clientIsTeacher,
+      isRegularStudent: clientIsRegular,
+      payMethod, // optional: 'z' for Bizum, 'T' for Card, or undefined for all
+    } = body;
+
+    const idClean = (bonoId || "").toLowerCase().trim();
+    const bono =
+      BONOS_DATA[bonoId] ||
+      Object.values(BONOS_DATA).find((b) => {
+        const bId = b.id.toLowerCase();
+        if (bId === idClean) return true;
+        if (idClean.includes("4") && bId.includes("4")) return true;
+        if (idClean.includes("8") && bId.includes("8")) return true;
+        if (idClean.includes("10") && bId.includes("10")) return true;
+        if (
+          (idClean.includes("ilimitad") || idClean.includes("pase")) &&
+          bId.includes("ilimitad")
+        )
+          return true;
+        if (
+          (idClean.includes("suelta") || idClean.includes("1")) &&
+          bId.includes("suelta")
+        )
+          return true;
+        return false;
+      });
+
+    if (!bono) {
+      return NextResponse.json(
+        { success: false, error: "Bono no encontrado o no válido." },
+        { status: 400 }
+      );
+    }
+
+    const origin =
+      req.headers.get("origin") ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      "https://app.dancefactoryalcorcon.es";
+
+    // Validar alumno en Supabase para determinar descuentos y matrícula
+    let isTeacher = Boolean(clientIsTeacher) || isTeacherProfile(undefined, studentEmail);
+    let isRegular = Boolean(clientIsRegular);
+    let isAlreadyPaid = false;
+    let studentVerifiedInDb = false;
+
+    if (studentId || studentEmail) {
+      try {
+        const { createClient } = await import("@supabase/supabase-js");
+        const supabaseUrl =
+          process.env.NEXT_PUBLIC_SUPABASE_URL ||
+          "https://wjnoawmefdurqqjwqdmi.supabase.co";
+        const supabaseAnonKey =
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+          "sb_publishable_dWudcdKMOeKH22g0IRKV7w_bxWNtEh2";
+        const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+        let dbStudent: any = null;
+        if (studentId) {
+          const { data } = await supabase
+            .from("alumnos")
+            .select("*")
+            .eq("id", studentId)
+            .maybeSingle();
+          dbStudent = data;
+        }
+        if (!dbStudent && studentEmail) {
+          const { data } = await supabase
+            .from("alumnos")
+            .select("*")
+            .ilike("email", studentEmail.trim().toLowerCase())
+            .maybeSingle();
+          dbStudent = data;
+        }
+
+        if (dbStudent) {
+          studentVerifiedInDb = true;
+
+          // Regla Docente (-10%)
+          if (isTeacherProfile(dbStudent, studentEmail)) {
+            isTeacher = true;
+          }
+
+          // Matrícula exenta si tiene clases regulares asignadas
+          const { data: enrollments } = await supabase
+            .from("alumnos_clases")
+            .select("clase_id")
+            .eq("alumno_id", dbStudent.id);
+
+          const hasEnrollments = Array.isArray(enrollments) && enrollments.length > 0;
+          const assignedIds = hasEnrollments
+            ? enrollments.map((e: any) => e.clase_id)
+            : [];
+
+          isRegular = isRegularClassStudent(dbStudent, {
+            assignedClassIds: assignedIds,
+            enrollmentsCount: assignedIds.length,
+          });
+
+          // Ya pagada esta temporada
+          if (hasPaidSeasonMatricula(dbStudent)) {
+            isAlreadyPaid = true;
+          }
+        }
+      } catch (checkErr) {
+        console.warn("[Redsys Create Payment] Error al consultar Supabase:", checkErr);
+        if (clientIsRegular !== undefined) {
+          isRegular = Boolean(clientIsRegular);
+        }
+        if (isFirstBonoOfYear !== undefined) {
+          isAlreadyPaid = !Boolean(isFirstBonoOfYear);
+        }
+      }
+    }
+
+    // Regla de Matrícula: Exenta para regulares, profesores y quienes ya la pagaron
+    const chargeMatricula =
+      !isTeacher &&
+      !isRegular &&
+      !isAlreadyPaid &&
+      (studentVerifiedInDb ? true : Boolean(isFirstBonoOfYear !== false));
+
+    const unitAmount = isTeacher
+      ? Math.round(bono.precio * 0.9 * 100)
+      : Math.round(bono.precio * 100);
+
+    const matriculaCents = chargeMatricula ? 1500 : 0;
+    const totalCents = unitAmount + matriculaCents;
+    const totalEurosStr = (totalCents / 100).toFixed(2);
+
+    // Generar identificador de pedido único oficial Redsys (12 caracteres, 4 primeros numéricos)
+    const order = createRedsysOrder();
+
+    // Guardar metadatos del pedido para procesar en el webhook
+    const metadataObj = {
+      studentId: studentId || "",
+      studentName: studentName || "",
+      studentEmail: studentEmail || "",
+      bonoId: bono.id,
+      bonoName: bono.nombre,
+      clasesCount: bono.clasesCount,
+      isTeacher: isTeacher ? "true" : "false",
+      isRegularStudent: isRegular ? "true" : "false",
+      isFirstBono: chargeMatricula ? "true" : "false",
+      matriculaCost: chargeMatricula ? "15.00" : "0.00",
+      totalAmount: totalEurosStr,
+    };
+
+    const merchantDataB64 = Buffer.from(JSON.stringify(metadataObj)).toString("base64");
+
+    const merchantUrl = `${origin}/api/redsys/webhook`;
+    const urlOk = `${origin}/clases?tab=bonos&payment=success&order=${order}`;
+    const urlKo = `${origin}/clases?tab=bonos&payment=cancelled&order=${order}`;
+
+    // Parámetros oficiales Redsys SIS
+    const merchantParams: Record<string, any> = {
+      DS_MERCHANT_AMOUNT: totalCents.toString(),
+      DS_MERCHANT_ORDER: order,
+      DS_MERCHANT_MERCHANTCODE: REDSYS_CONFIG.merchantCode,
+      DS_MERCHANT_CURRENCY: REDSYS_CONFIG.currency,
+      DS_MERCHANT_TRANSACTIONTYPE: "0",
+      DS_MERCHANT_TERMINAL: REDSYS_CONFIG.terminal,
+      DS_MERCHANT_MERCHANTURL: merchantUrl,
+      DS_MERCHANT_URLOK: urlOk,
+      DS_MERCHANT_URLKO: urlKo,
+      DS_MERCHANT_PRODUCTDESCRIPTION: `${bono.nombre}${isTeacher ? " (-10% Docente)" : ""} • Dance Factory`,
+      DS_MERCHANT_MERCHANTNAME: "Dance Factory",
+      DS_MERCHANT_MERCHANTDATA: merchantDataB64,
+    };
+
+    // Si el usuario eligió Bizum explícitamente, o tarjeta
+    if (payMethod === "z") {
+      merchantParams.DS_MERCHANT_PAYMETHODS = "z";
+    } else if (payMethod === "T") {
+      merchantParams.DS_MERCHANT_PAYMETHODS = "T";
+    }
+
+    const merchantParamsB64 = Buffer.from(JSON.stringify(merchantParams)).toString(
+      "base64"
+    );
+
+    const signature = createMerchantSignature({
+      secretKey: REDSYS_CONFIG.secretKey,
+      order,
+      merchantParamsB64,
+    });
+
+    return NextResponse.json({
+      success: true,
+      order,
+      formUrl: REDSYS_CONFIG.url,
+      params: {
+        Ds_SignatureVersion: "HMAC_SHA256_V1",
+        Ds_MerchantParameters: merchantParamsB64,
+        Ds_Signature: signature,
+      },
+      amountEuros: totalEurosStr,
+      chargeMatricula,
+      bono,
+    });
+  } catch (error: any) {
+    console.error("[Redsys Create Payment Error]:", error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error.message || "Error al generar la sesión de pago de Redsys.",
+      },
+      { status: 500 }
+    );
+  }
+}

@@ -465,18 +465,95 @@ function ClasesContent() {
     });
   };
 
-  const [paymentMethodTab, setPaymentMethodTab] = useState<"stripe" | "transferencia" | "recepcion">("stripe");
+  const [paymentMethodTab, setPaymentMethodTab] = useState<"stripe" | "tpv" | "transferencia" | "recepcion">("stripe");
+  const [showTpvOption, setShowTpvOption] = useState(false);
   const [isStripeLoading, setIsStripeLoading] = useState(false);
+  const [isRedsysLoading, setIsRedsysLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const verifiedSessionIdRef = useState<{ current: string | null }>({ current: null })[0];
 
-  // Handle Stripe Payment Return
+  // Comprobar si se activa la opción de TPV:
+  // EXCLUSIVO para el alumno Fran Sarciat mientras se realizan las pruebas de certificación
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const isFranSarciat = Boolean(
+      currentStudent && (
+        (currentStudent.nombre_completo && currentStudent.nombre_completo.toLowerCase().includes("sarciat")) ||
+        (currentStudent.nombre_completo && currentStudent.nombre_completo.toLowerCase().includes("fran")) ||
+        (currentStudent.email && currentStudent.email.toLowerCase().includes("sarciat")) ||
+        (currentStudent.email && currentStudent.email.toLowerCase().includes("fransarciat")) ||
+        currentStudent.id === "demo_fran"
+      )
+    );
+
+    if (
+      isFranSarciat ||
+      process.env.NEXT_PUBLIC_ENABLE_REDSYS === "true" ||
+      params.get("tpv_test") === "true" ||
+      params.get("dev_tpv") === "true"
+    ) {
+      setShowTpvOption(true);
+      // Preseleccionar la pestaña TPV para Fran Sarciat para máxima comodidad
+      setPaymentMethodTab("tpv");
+    } else {
+      setShowTpvOption(false);
+      setPaymentMethodTab("stripe");
+    }
+  }, [currentStudent]);
+
+  // Handle Stripe & Redsys Payment Return
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const payment = params.get("payment");
     const sessionId = params.get("session_id");
+    const order = params.get("order");
 
+    // 1. RETORNO DE REDSYS TPV CAIXABANK
+    if (payment === "success" && order) {
+      if (verifiedSessionIdRef.current === order) return;
+      verifiedSessionIdRef.current = order;
+
+      try {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete("payment");
+        cleanUrl.searchParams.delete("order");
+        window.history.replaceState({}, "", cleanUrl.pathname + (cleanUrl.search || ""));
+      } catch (e) {}
+
+      const verifyRedsysPayment = async () => {
+        try {
+          const res = await fetch(`/api/redsys/verify-order?order=${order}&studentId=${currentStudent?.id || ""}`);
+          const data = await res.json();
+          if (refetchStudents) await refetchStudents();
+          setModal({
+            isOpen: true,
+            title: "🎉 ¡Pago con TPV CaixaBank Completado!",
+            message: `Tu operación (Pedido ${order}) ha sido procesada con éxito por la pasarela de CaixaBank.\n\nTu saldo ha sido actualizado a ${data.updatedBalance === 999 ? "Ilimitado" : `${data.updatedBalance ?? "tus"} clases`} disponibles para reservar en el calendario.`,
+            type: "success",
+            confirmText: "Reservar en Calendario",
+            onConfirm: () => {
+              setActiveTab("openclass");
+              router.replace("/clases?tab=openclass");
+            }
+          });
+        } catch (e) {
+          console.error("Error verificando pedido de Redsys:", e);
+        }
+      };
+      verifyRedsysPayment();
+    } else if (payment === "cancelled" && order) {
+      setModal({
+        isOpen: true,
+        title: "Pago en TPV Cancelado",
+        message: "El proceso de pago en el TPV Virtual de CaixaBank fue cancelado o no se completó. No se ha realizado ningún cargo en tu tarjeta.",
+        type: "info"
+      });
+      router.replace("/clases?tab=bonos");
+    }
+
+    // 2. RETORNO DE STRIPE (SOPORTE ACTUAL)
     if (payment === "success" && sessionId) {
       if (verifiedSessionIdRef.current === sessionId) return;
       verifiedSessionIdRef.current = sessionId;
@@ -516,7 +593,7 @@ function ClasesContent() {
         }
       };
       verifyStripePayment();
-    } else if (payment === "cancelled") {
+    } else if (payment === "cancelled" && !order) {
       setModal({
         isOpen: true,
         title: "Pago Cancelado",
@@ -525,7 +602,7 @@ function ClasesContent() {
       });
       router.replace("/clases?tab=bonos");
     }
-  }, [router, refetchStudents]);
+  }, [router, refetchStudents, currentStudent]);
 
   const handleCopy = (text: string, fieldId: string) => {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -591,6 +668,65 @@ function ClasesContent() {
         type: "warning"
       });
       setIsStripeLoading(false);
+    }
+  };
+
+  const handleRedsysCheckout = async (payMethod?: "z" | "T") => {
+    if (!selectedBonoForPayment || !currentStudent?.id) return;
+    setIsRedsysLoading(true);
+
+    try {
+      const calc = getBonoCalculation(selectedBonoForPayment);
+      const isFirstBonoOfYear = calc ? calc.matriculaCost > 0 : false;
+      const res = await fetch("/api/redsys/create-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bonoId: selectedBonoForPayment.id,
+          studentId: currentStudent.id,
+          studentName: currentStudent.nombre_completo,
+          studentEmail: currentStudent.email,
+          isFirstBonoOfYear,
+          isTeacher: calc?.exemptionType === "teacher",
+          isRegularStudent: calc?.exemptionType === "regular",
+          payMethod,
+        })
+      });
+
+      const data = await res.json();
+      if (data.success && data.formUrl && data.params) {
+        // Enviar formulario POST a Redsys de forma automática e invisible
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = data.formUrl;
+        form.style.display = "none";
+        for (const [key, value] of Object.entries(data.params)) {
+          const input = document.createElement("input");
+          input.type = "hidden";
+          input.name = key;
+          input.value = value as string;
+          form.appendChild(input);
+        }
+        document.body.appendChild(form);
+        form.submit();
+      } else {
+        setModal({
+          isOpen: true,
+          title: "Error con la Pasarela Bancaria",
+          message: data.error || "No se pudo iniciar la conexión con el TPV de CaixaBank. Inténtalo de nuevo.",
+          type: "warning"
+        });
+        setIsRedsysLoading(false);
+      }
+    } catch (err: any) {
+      console.error("Error initiating Redsys checkout:", err);
+      setModal({
+        isOpen: true,
+        title: "Error de Conexión",
+        message: "No se pudo conectar con el servidor bancario.",
+        type: "warning"
+      });
+      setIsRedsysLoading(false);
     }
   };
 
@@ -1620,7 +1756,22 @@ function ClasesContent() {
                 Selecciona Método de Pago:
               </label>
 
-              <div className="grid grid-cols-3 gap-1.5 p-1 bg-[var(--color-bg)] rounded-2xl border border-[var(--color-border)] text-center">
+              <div className={`grid ${showTpvOption ? "grid-cols-4" : "grid-cols-3"} gap-1.5 p-1 bg-[var(--color-bg)] rounded-2xl border border-[var(--color-border)] text-center`}>
+                {showTpvOption && (
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethodTab("tpv")}
+                    className={`py-2 px-1 rounded-xl text-[11px] font-bold transition-all flex flex-col items-center gap-1 cursor-pointer border ${
+                      paymentMethodTab === "tpv"
+                        ? "bg-blue-600 text-white shadow-md border-blue-500"
+                        : "text-blue-400 hover:text-white border-blue-500/30 bg-blue-500/10"
+                    }`}
+                  >
+                    <CreditCard size={15} />
+                    <span>TPV CaixaBank</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setPaymentMethodTab("stripe")}
@@ -1661,6 +1812,64 @@ function ClasesContent() {
                 </button>
               </div>
             </div>
+
+            {/* TAB TPV CAIXABANK (CYBERPAC / REDSYS) */}
+            {paymentMethodTab === "tpv" && (
+              <div className="space-y-3 pt-1 animate-in fade-in duration-150">
+                <div className="p-3 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-xs text-slate-300 space-y-2">
+                  <div className="flex items-center justify-between font-bold text-white">
+                    <span className="flex items-center gap-1.5 text-blue-400">
+                      <ShieldCheck size={16} className="text-blue-400" />
+                      TPV Virtual Oficial CaixaBank
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                      Cyberpac Redsys
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-300 leading-normal">
+                    Conexión directa con la pasarela bancaria cifrada de CaixaBank. Admite todas las tarjetas bancarias (Visa, Mastercard) y pago directo con <strong>Bizum</strong>.
+                  </p>
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <span className="px-2 py-0.5 rounded bg-slate-900/80 text-[10px] font-bold text-slate-200 border border-slate-700">
+                      💳 Tarjetas Visa / MC
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-emerald-950/80 text-[10px] font-bold text-emerald-300 border border-emerald-700/50 flex items-center gap-1">
+                      <Smartphone size={11} /> Bizum
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleRedsysCheckout("T")}
+                    disabled={isRedsysLoading}
+                    className="py-3.5 px-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/25 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    {isRedsysLoading ? (
+                      <Loader2 size={15} className="animate-spin" />
+                    ) : (
+                      <CreditCard size={15} />
+                    )}
+                    <span>Pagar con Tarjeta</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRedsysCheckout("z")}
+                    disabled={isRedsysLoading}
+                    className="py-3.5 px-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/25 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    {isRedsysLoading ? (
+                      <Loader2 size={15} className="animate-spin" />
+                    ) : (
+                      <Smartphone size={15} />
+                    )}
+                    <span>Pagar con Bizum</span>
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* TAB 1: STRIPE CHECKOUT */}
             {paymentMethodTab === "stripe" && (
