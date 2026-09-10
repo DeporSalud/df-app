@@ -218,6 +218,15 @@ export async function POST(req: NextRequest) {
     const urlOk = `${origin}/clases?tab=bonos&payment=success&order=${order}`;
     const urlKo = `${origin}/clases?tab=bonos&payment=cancelled&order=${order}`;
 
+    // Limpiar descripción de producto eliminando acentos, % o símbolos especiales para Redsys
+    const cleanDesc = (bono.nombre + " Dance Factory")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9 ]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 50);
+
     // Parámetros oficiales Redsys SIS
     const merchantParams: Record<string, any> = {
       DS_MERCHANT_AMOUNT: totalCents.toString(),
@@ -229,7 +238,7 @@ export async function POST(req: NextRequest) {
       DS_MERCHANT_MERCHANTURL: merchantUrl,
       DS_MERCHANT_URLOK: urlOk,
       DS_MERCHANT_URLKO: urlKo,
-      DS_MERCHANT_PRODUCTDESCRIPTION: `${bono.nombre}${isTeacher ? " (-10% Docente)" : ""} • Dance Factory`,
+      DS_MERCHANT_PRODUCTDESCRIPTION: cleanDesc,
       DS_MERCHANT_MERCHANTNAME: "Dance Factory",
       DS_MERCHANT_MERCHANTDATA: merchantDataB64,
     };

@@ -1,4 +1,4 @@
-import crypto from "crypto";
+import crypto from "node:crypto";
 
 /**
  * Configuración oficial de Redsys TPV Virtual CaixaBank (Cyberpac)
@@ -15,8 +15,65 @@ export const REDSYS_CONFIG = {
 };
 
 /**
+ * Añade relleno de ceros (Zero Padding) al buffer hasta un múltiplo del tamaño de bloque (8 bytes para 3DES).
+ * Requisito estricto y oficial del protocolo Redsys.
+ */
+export const zeroPad = (buf: Buffer, blocksize: number = 8): Buffer => {
+  const pad = Buffer.alloc(
+    (blocksize - (buf.length % blocksize)) % blocksize,
+    0
+  );
+  return Buffer.concat([buf, pad]);
+};
+
+/**
+ * Cifra el número de pedido usando 3DES (Triple DES en modo CBC con IV a ceros y Zero Padding)
+ * Redsys utiliza este método para derivar la clave HMAC única de cada transacción.
+ */
+export const encrypt3DES = (secretKeyB64: string, message: string): Buffer => {
+  const keyBuf = Buffer.from(secretKeyB64, "base64");
+  const iv = Buffer.alloc(8, 0);
+
+  const messageBuf = Buffer.from(message.toString(), "utf8");
+  // Alinear al tamaño de bloque (8 bytes) mediante relleno de ceros (Zero Padding)
+  const paddedMessageBuf = zeroPad(messageBuf, 8);
+
+  const cipher = crypto.createCipheriv("des-ede3-cbc", keyBuf, iv);
+  // CRÍTICO: Redsys requiere Zero Padding (\0), NO el relleno PKCS7 por defecto de Node.js.
+  // El uso de setAutoPadding(true) causaba el error técnico SIS0042.
+  cipher.setAutoPadding(false);
+
+  const encryptedBuf = Buffer.concat([
+    cipher.update(paddedMessageBuf),
+    cipher.final(),
+  ]);
+
+  const maxLength = Math.ceil(messageBuf.length / 8) * 8;
+  return encryptedBuf.subarray(0, maxLength);
+};
+
+/**
+ * Genera la firma HMAC-SHA256 oficial para la petición a Redsys
+ */
+export const createMerchantSignature = ({
+  secretKey,
+  order,
+  merchantParamsB64,
+}: {
+  secretKey: string;
+  order: string;
+  merchantParamsB64: string;
+}): string => {
+  const orderKeyBuf = encrypt3DES(secretKey, order);
+  return crypto
+    .createHmac("sha256", orderKeyBuf)
+    .update(merchantParamsB64)
+    .digest("base64");
+};
+
+/**
  * Genera un identificador de pedido válido para Redsys:
- * - Longitud: 12 caracteres
+ * - Longitud: 12 caracteres numéricos
  * - Los primeros 4 caracteres son numéricos obligatoriamente (YYMM)
  * - Los siguientes 8 caracteres son numéricos aleatorios únicos
  */
@@ -29,16 +86,16 @@ export function createRedsysOrder(): string {
 }
 
 /**
- * Deriva la clave de cifrado 3DES para el pedido específico:
- * - Algoritmo: DES-EDE3-CBC (Triple DES)
- * - Vector de inicialización (IV): 8 bytes a cero
+ * Decodifica los parámetros de Redsys enviados en Base64
  */
-function encrypt3DES(order: string, secretKeyB64: string): Buffer {
-  const key = Buffer.from(secretKeyB64, "base64");
-  const iv = Buffer.alloc(8, 0);
-  const cipher = crypto.createCipheriv("des-ede3-cbc", key, iv);
-  cipher.setAutoPadding(true);
-  return Buffer.concat([cipher.update(order, "utf8"), cipher.final()]);
+export function decodeMerchantParameters(merchantParamsB64: string): Record<string, any> {
+  try {
+    const normalized = merchantParamsB64.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonStr = Buffer.from(normalized, "base64").toString("utf8");
+    return JSON.parse(jsonStr);
+  } catch (err: any) {
+    throw new Error(`Error al decodificar Ds_MerchantParameters: ${err.message}`);
+  }
 }
 
 /**
@@ -46,37 +103,6 @@ function encrypt3DES(order: string, secretKeyB64: string): Buffer {
  */
 export function normalizeBase64(str: string): string {
   return str.replace(/-/g, "+").replace(/_/g, "/");
-}
-
-/**
- * Genera la firma HMAC-SHA256 oficial para la petición a Redsys
- */
-export function createMerchantSignature({
-  secretKey,
-  order,
-  merchantParamsB64,
-}: {
-  secretKey: string;
-  order: string;
-  merchantParamsB64: string;
-}): string {
-  const orderKey = encrypt3DES(order, secretKey);
-  const hmac = crypto.createHmac("sha256", orderKey);
-  hmac.update(merchantParamsB64);
-  return hmac.digest("base64");
-}
-
-/**
- * Decodifica los parámetros de Redsys enviados en Base64
- */
-export function decodeMerchantParameters(merchantParamsB64: string): Record<string, any> {
-  try {
-    const normalized = normalizeBase64(merchantParamsB64);
-    const jsonStr = Buffer.from(normalized, "base64").toString("utf8");
-    return JSON.parse(jsonStr);
-  } catch (err: any) {
-    throw new Error(`Error al decodificar Ds_MerchantParameters: ${err.message}`);
-  }
 }
 
 /**
