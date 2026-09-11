@@ -48,7 +48,8 @@ import {
   getSesionReservasCount,
   isSesionCompleta,
   normalizeClaseId,
-  DEFAULT_STUDIO2_OPEN_CLASSES
+  DEFAULT_STUDIO2_OPEN_CLASSES,
+  syncReservasFromSupabase
 } from "@/lib/openClassService";
 import { 
   calculateBonoPriceAndMatricula, 
@@ -242,6 +243,10 @@ function ClasesContent() {
       }
     }
 
+    try {
+      await syncReservasFromSupabase();
+    } catch (e) {}
+
     setIsLoading(false);
   };
 
@@ -361,15 +366,24 @@ function ClasesContent() {
       if (refetchStudents) await refetchStudents();
     }
 
-    // 3. Register enrollment in alumnos_clases as well
+    // 3. Register enrollment in alumnos_clases as well with exact session date
     try {
       const classUUID = normalizeClaseId(clase.id);
-      await supabase.from("alumnos_clases").insert([{
+      const sessionISO = `${calendarDay.dateISO}T${clase.hora_inicio || "19:00"}:00.000Z`;
+      const { error: insertErr } = await supabase.from("alumnos_clases").insert([{
         alumno_id: currentStudent.id,
-        clase_id: classUUID
+        clase_id: classUUID,
+        asignado_en: sessionISO
       }]);
+      if (insertErr) {
+        // Update asignado_en if row already exists
+        await supabase.from("alumnos_clases")
+          .update({ asignado_en: sessionISO })
+          .eq("alumno_id", currentStudent.id)
+          .eq("clase_id", classUUID);
+      }
     } catch (e) {
-      // Ignored if duplicate
+      // Ignored
     }
 
     // Audit Log

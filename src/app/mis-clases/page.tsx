@@ -31,7 +31,8 @@ import {
   cancelarReservaOpenClass, 
   OpenClassReserva, 
   formatSedeName,
-  normalizeClaseId
+  normalizeClaseId,
+  syncReservasFromSupabase
 } from "@/lib/openClassService";
 
 export default function MisClasesPage() {
@@ -77,6 +78,7 @@ export default function MisClasesPage() {
     }
 
     // 2. Fetch Open Class calendar bookings
+    await syncReservasFromSupabase();
     const bookings = getReservasAlumno(currentStudent.id);
     setOpenClassBookings(bookings);
 
