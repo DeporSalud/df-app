@@ -376,11 +376,7 @@ function ClasesContent() {
         asignado_en: sessionISO
       }]);
       if (insertErr) {
-        // Update asignado_en if row already exists
-        await supabase.from("alumnos_clases")
-          .update({ asignado_en: sessionISO })
-          .eq("alumno_id", currentStudent.id)
-          .eq("clase_id", classUUID);
+        console.warn("Notice: Session might already be registered in alumnos_clases:", insertErr);
       }
     } catch (e) {
       // Ignored

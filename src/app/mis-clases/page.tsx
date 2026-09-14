@@ -128,14 +128,20 @@ export default function MisClasesPage() {
       if (refetchStudents) await refetchStudents();
     }
 
-    // 3. Delete from alumnos_clases only if no other active reservations remain for this class
+    // 3. Delete specific session enrollment from alumnos_clases in Supabase
     try {
       if (reserva.clase_id && currentStudent.id) {
         const targetClassId = normalizeClaseId(reserva.clase_id);
-        const otherActive = getReservasAlumno(currentStudent.id).filter(
-          r => normalizeClaseId(r.clase_id) === targetClassId && r.id !== reserva.id && (r.estado === "Confirmada" || r.estado === "Asistida")
-        );
-        if (otherActive.length === 0) {
+        const sessionDate = reserva.fecha_iso;
+        if (sessionDate) {
+          await supabase
+            .from("alumnos_clases")
+            .delete()
+            .eq("alumno_id", currentStudent.id)
+            .eq("clase_id", targetClassId)
+            .gte("asignado_en", `${sessionDate}T00:00:00`)
+            .lte("asignado_en", `${sessionDate}T23:59:59`);
+        } else {
           await supabase
             .from("alumnos_clases")
             .delete()
