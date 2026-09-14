@@ -16,7 +16,9 @@ import {
   AlertTriangle,
   Flame,
   CheckCircle2,
-  CalendarDays
+  CalendarDays,
+  Lock,
+  ShieldAlert
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase/client";
@@ -32,7 +34,8 @@ import {
   OpenClassReserva, 
   formatSedeName,
   normalizeClaseId,
-  syncReservasFromSupabase
+  syncReservasFromSupabase,
+  isReservaCancelable
 } from "@/lib/openClassService";
 
 export default function MisClasesPage() {
@@ -98,10 +101,22 @@ export default function MisClasesPage() {
   }, [currentStudent?.id]);
 
   const handleCancelarReservaOpenClass = (reserva: OpenClassReserva) => {
+    const status = isReservaCancelable(reserva);
+    if (!status.cancelable) {
+      setModal({
+        isOpen: true,
+        title: "Cancelación No Permitida",
+        message: status.motivo || "No es posible cancelar reservas con menos de 24 horas de antelación. Esta clase queda computada en tu bono.",
+        type: "warning",
+        confirmText: "Entendido"
+      });
+      return;
+    }
+
     setModal({
       isOpen: true,
       title: "¿Cancelar Reserva?",
-      message: `¿Estás seguro de que deseas cancelar tu reserva para la sesión de "${reserva.nombre_clase}" del ${reserva.fecha_formateada}?\n\nAl cancelar, se reembolsará automáticamente 1 clase a tu saldo de bono.`,
+      message: `¿Estás seguro de que deseas cancelar tu reserva para la sesión de "${reserva.nombre_clase}" del ${reserva.fecha_formateada}?\n\nAl cancelar con más de 24 horas de antelación, se reembolsará automáticamente 1 clase a tu saldo de bono.`,
       type: "warning",
       showCancel: true,
       confirmText: "Sí, Cancelar Reserva",
@@ -112,7 +127,20 @@ export default function MisClasesPage() {
   const executeCancelarReservaOpenClass = async (reserva: OpenClassReserva) => {
     if (!currentStudent?.id) return;
 
-    // 1. Cancel in service (returns false if already cancelled)
+    // Strict 24-hour validation
+    const status = isReservaCancelable(reserva);
+    if (!status.cancelable) {
+      setModal({
+        isOpen: true,
+        title: "Cancelación No Permitida",
+        message: status.motivo || "No es posible cancelar reservas con menos de 24 horas de antelación.",
+        type: "warning",
+        confirmText: "Entendido"
+      });
+      return;
+    }
+
+    // 1. Cancel in service (returns false if already cancelled or < 24h)
     const didCancel = cancelarReservaOpenClass(reserva.id);
     if (!didCancel) {
       loadAllBookings();
@@ -251,62 +279,92 @@ export default function MisClasesPage() {
                     </span>
                   </div>
 
+                  <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-start gap-2.5 text-xs text-amber-200/90 mb-1">
+                    <ShieldAlert size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                    <p className="leading-relaxed text-[11px]">
+                      <strong>Política de Cancelación Oficial:</strong> Las reservas solo pueden cancelarse con <strong>más de 24 horas de antelación</strong> para recuperar la clase. Si faltan 24 horas o menos, la plaza queda bloqueada y la clase se computa de tu bono.
+                    </p>
+                  </div>
+
                   <div className="space-y-3">
-                    {openClassBookings.map((reserva) => (
-                      <div 
-                        key={reserva.id}
-                        className="rounded-3xl border border-amber-500/40 bg-gradient-to-r from-amber-500/10 via-[var(--color-bg-card)] to-[var(--color-bg-card)] p-5 shadow-xl space-y-3"
-                      >
-                        <div className="flex justify-between items-start gap-2">
-                          <div>
-                            <div className="flex items-center gap-1.5 mb-1">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/20 px-2.5 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
-                                <Flame size={11} />
-                                Open Class
-                              </span>
-                              <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/15 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
-                                ✓ Plaza Confirmada
-                              </span>
+                    {openClassBookings.map((reserva) => {
+                      const { cancelable, horasRestantes } = isReservaCancelable(reserva);
+                      const isPast = horasRestantes <= 0;
+
+                      return (
+                        <div 
+                          key={reserva.id}
+                          className="rounded-3xl border border-amber-500/40 bg-gradient-to-r from-amber-500/10 via-[var(--color-bg-card)] to-[var(--color-bg-card)] p-5 shadow-xl space-y-3"
+                        >
+                          <div className="flex justify-between items-start gap-2">
+                            <div>
+                              <div className="flex items-center gap-1.5 mb-1">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/20 px-2.5 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
+                                  <Flame size={11} />
+                                  Open Class
+                                </span>
+                                <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/15 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+                                  ✓ Plaza Confirmada
+                                </span>
+                              </div>
+
+                              <h3 className="text-lg font-[family-name:var(--font-heading)] text-white tracking-wide">
+                                {reserva.nombre_clase}
+                              </h3>
+                              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                                Profesor/a: <strong className="text-white">{reserva.profesor}</strong>
+                              </p>
                             </div>
 
-                            <h3 className="text-lg font-[family-name:var(--font-heading)] text-white tracking-wide">
-                              {reserva.nombre_clase}
-                            </h3>
-                            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                              Profesor/a: <strong className="text-white">{reserva.profesor}</strong>
-                            </p>
-                          </div>
-
-                          <div className="text-right shrink-0">
-                            <div className="flex items-center gap-1 text-amber-400 font-mono font-bold text-sm bg-amber-500/15 px-2.5 py-1 rounded-xl border border-amber-500/30">
-                              <Clock size={13} />
-                              <span>{reserva.hora_inicio}h</span>
+                            <div className="text-right shrink-0">
+                              <div className="flex items-center gap-1 text-amber-400 font-mono font-bold text-sm bg-amber-500/15 px-2.5 py-1 rounded-xl border border-amber-500/30">
+                                <Clock size={13} />
+                                <span>{reserva.hora_inicio}h</span>
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                        {/* Fecha y Sala */}
-                        <div className="p-3 rounded-2xl bg-[var(--color-bg)] border border-[var(--color-border)] flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-2 text-white font-bold font-mono">
-                            <CalendarDays size={15} className="text-amber-400" />
-                            <span>📅 {reserva.fecha_formateada}</span>
+                          {/* Fecha y Sala */}
+                          <div className="p-3 rounded-2xl bg-[var(--color-bg)] border border-[var(--color-border)] flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2 text-white font-bold font-mono">
+                              <CalendarDays size={15} className="text-amber-400" />
+                              <span>📅 {reserva.fecha_formateada}</span>
+                            </div>
+                            <span className="text-[11px] text-slate-400 font-semibold">
+                              {formatSedeName(reserva.sede)}
+                            </span>
                           </div>
-                          <span className="text-[11px] text-slate-400 font-semibold">
-                            {formatSedeName(reserva.sede)}
-                          </span>
-                        </div>
 
-                        <div className="flex justify-end pt-1">
-                          <button
-                            onClick={() => handleCancelarReservaOpenClass(reserva)}
-                            className="text-[11px] font-bold text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-1.5 rounded-xl border border-rose-500/20 transition-all flex items-center gap-1 cursor-pointer"
-                          >
-                            <Trash2 size={13} />
-                            <span>Cancelar Reserva (Devolver 1 clase)</span>
-                          </button>
+                          {/* Acción de Cancelación o Aviso de 24h */}
+                          {cancelable ? (
+                            <div className="flex justify-end pt-1">
+                              <button
+                                onClick={() => handleCancelarReservaOpenClass(reserva)}
+                                className="text-[11px] font-bold text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-1.5 rounded-xl border border-rose-500/20 transition-all flex items-center gap-1 cursor-pointer"
+                              >
+                                <Trash2 size={13} />
+                                <span>Cancelar Reserva (Devolver 1 clase)</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="pt-2.5 border-t border-[var(--color-border)]/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                              <div className="flex items-center gap-1.5 text-amber-400 font-medium">
+                                <Lock size={13} className="text-amber-400 shrink-0" />
+                                <span className="text-[11px]">
+                                  {isPast 
+                                    ? "Sesión finalizada o en curso" 
+                                    : "Plazo de cancelación cerrado (menos de 24h)"}
+                                </span>
+                              </div>
+                              <span className="text-[10px] font-mono font-semibold text-slate-300 bg-slate-800/90 px-2.5 py-1 rounded-lg border border-slate-700 inline-flex items-center gap-1 self-start sm:self-auto">
+                                <span>🔒</span>
+                                <span>Clase computada</span>
+                              </span>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
