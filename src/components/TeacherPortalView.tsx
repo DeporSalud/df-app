@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { 
   UserCheck, Check, Clock, Users, ShieldAlert, Sparkles, Calendar, Search, 
@@ -24,6 +24,11 @@ import {
   cancelarReservaOpenClass,
   getReservasPorClaseYSesion,
   getOpenClassReservas,
+  syncReservasFromSupabase,
+  getUpcomingSessionsForClass,
+  DEFAULT_STUDIO2_OPEN_CLASSES,
+  LEGACY_ID_MAP,
+  cleanDateISO,
   OpenClassReserva
 } from "@/lib/openClassService";
 
@@ -40,6 +45,20 @@ const normalizeText = (text?: string | null): string => {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+};
+
+const isOpenClass = (clase: any) => {
+  if (!clase) return false;
+  const nameUpper = (clase.nombre_clase || "").toUpperCase();
+  const typeUpper = (clase.tipo_clase || "").toUpperCase();
+  return (
+    typeUpper.includes("OPEN") || 
+    nameUpper.includes("OPEN") || 
+    nameUpper.includes("FORMACI") || 
+    nameUpper.includes("ROTAT") ||
+    Boolean(DEFAULT_STUDIO2_OPEN_CLASSES?.some((def: any) => def.id === clase.id)) ||
+    Boolean(LEGACY_ID_MAP?.[clase.id])
+  );
 };
 
 export default function TeacherPortalView({ initialTab = "mis_clases" }: { initialTab?: "mis_clases" | "open_classes" | "comprar_bono" | "perfil" }) {
@@ -62,6 +81,11 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   const [allOpenClasses, setAllOpenClasses] = useState<any[]>([]);
   const [openClassReservasVersion, setOpenClassReservasVersion] = useState<number>(0);
   
+  const openClassSessions = useMemo(() => {
+    if (!selectedClase || !isOpenClass(selectedClase)) return [];
+    return getUpcomingSessionsForClass(selectedClase, 8, "2026-09-14");
+  }, [selectedClase?.id, selectedClase?.dia_semana, openClassReservasVersion]);
+  
   // Checkout
   const [selectedBonoForPayment, setSelectedBonoForPayment] = useState<any | null>(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
@@ -74,18 +98,6 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
 
   const systemDays = ["DOMINGO", "LUNES", "MARTES", "MIÉRCOLES", "JUEVES", "VIERNES", "SÁBADO"];
   const todayStr = systemDays[new Date().getDay()];
-
-  const isOpenClass = (clase: any) => {
-    if (!clase) return false;
-    const name = (clase.nombre_clase || "").toLowerCase();
-    const type = (clase.tipo_clase || "").toLowerCase();
-    return (
-      type.includes("open") || 
-      name.includes("open class") || 
-      name.startsWith("open ") ||
-      name === "open"
-    );
-  };
 
   const bonosDocentes = [
     { 
@@ -131,6 +143,9 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   const fetchData = async () => {
     setIsLoading(true);
     try {
+      // Sync open class bookings from Supabase
+      await syncReservasFromSupabase();
+
       // Find teacher in alumnos table or create fallback
       const { data: studentList } = await supabase.from("alumnos").select("*");
       const normName = normalizeText(teacherName);
@@ -187,12 +202,81 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
 
   // Load Roster for a class and specific date
   const loadRosterForDate = async (clase: any, dateIso: string) => {
+    if (!clase?.id) return;
     setIsLoading(true);
     try {
       if (isOpenClass(clase)) {
-        // Fetch students & teachers enrolled for this specific session date
-        const sessionReservas = getReservasPorClaseYSesion(clase.id, dateIso);
-        
+        // ALWAYS sync from Supabase first
+        await syncReservasFromSupabase();
+
+        // 1. Fetch from synced service
+        let sessionReservas = getReservasPorClaseYSesion(clase.id, dateIso);
+
+        // 2. Direct fallback to alumnos_clases in Supabase if service returns 0
+        if (sessionReservas.length === 0) {
+          const { data: directRows } = await supabase
+            .from("alumnos_clases")
+            .select(`
+              id,
+              alumno_id,
+              clase_id,
+              asignado_en,
+              alumnos (
+                id,
+                nombre_completo,
+                email,
+                telefono,
+                dni,
+                plan_activo,
+                clases_restantes,
+                estado,
+                sede
+              )
+            `)
+            .eq("clase_id", clase.id);
+
+          const matchingDirect = (directRows || []).filter(r => {
+            const rawDate = r.asignado_en ? cleanDateISO(r.asignado_en) : "";
+            return !dateIso || rawDate === dateIso || rawDate.startsWith(dateIso);
+          });
+
+          if (matchingDirect.length > 0) {
+            const attendees = matchingDirect.map(r => {
+              const a: any = Array.isArray(r.alumnos) ? r.alumnos[0] : r.alumnos;
+              const isDocente = (a?.nombre_completo || "").toLowerCase().includes("docente") ||
+                                (a?.plan_activo || "").toLowerCase().includes("docente");
+              return {
+                id: r.alumno_id,
+                nombre_completo: a?.nombre_completo || "Alumno",
+                email: a?.email || "",
+                telefono: a?.telefono || "",
+                plan_activo: a?.plan_activo || "Open Class",
+                clases_restantes: a?.clases_restantes ?? null,
+                estado: a?.estado || "Activo",
+                sede: a?.sede || clase.sede,
+                is_docente: isDocente,
+                reserva_id: r.id,
+                fecha_reserva: dateIso,
+                bono_agotado: false,
+                debe_cuota: false
+              };
+            });
+            setRoster(attendees);
+
+            const { data: asistenciasData } = await supabase
+              .from("asistencias")
+              .select("alumno_id")
+              .eq("clase_id", clase.id)
+              .gte("fecha_hora", dateIso + "T00:00:00")
+              .lte("fecha_hora", dateIso + "T23:59:59");
+
+            const ids = (asistenciasData || []).map((a: any) => a.alumno_id);
+            setAsistenciasRegistradas(ids);
+            setIsLoading(false);
+            return;
+          }
+        }
+
         // Fetch all students from DB to enrich details
         const { data: allDbStudents } = await supabase.from("alumnos").select("*");
         const dbMap = new Map((allDbStudents || []).map((s: any) => [s.id, s]));
@@ -233,77 +317,74 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
         const ids = (asistenciasData || []).map((a: any) => a.alumno_id);
         setAsistenciasRegistradas(ids);
       } else {
-        // Regular class: fetch enrollments from alumnos_clases
+        // Regular class: fetch enrollments from alumnos_clases (mirroring Reception)
         let classStudents: any[] = [];
 
         try {
-          const { data: rawEnrollments, error: rawErr } = await supabase
+          const { data: enrolled, error: enrollError } = await supabase
             .from("alumnos_clases")
-            .select("alumno_id")
+            .select(`
+              alumno_id,
+              asignado_en,
+              alumnos (
+                id,
+                nombre_completo,
+                telefono,
+                email,
+                plan_activo,
+                clases_restantes,
+                estado,
+                sede,
+                dni
+              )
+            `)
             .eq("clase_id", clase.id);
 
-          if (!rawErr && rawEnrollments && rawEnrollments.length > 0) {
-            const studentIds = rawEnrollments
-              .map((e: any) => e.alumno_id)
-              .filter((id: any) => Boolean(id && typeof id === "string" && id.trim() !== ""));
+          if (!enrollError && enrolled && enrolled.length > 0) {
+            classStudents = enrolled
+              .map((e: any) => (Array.isArray(e.alumnos) ? e.alumnos[0] : e.alumnos))
+              .filter((a: any) => a != null && a.id)
+              .map((s: any) => ({
+                ...s,
+                bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0,
+                debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
+              }));
+          } else {
+            // 2-step fallback
+            const { data: rawEnrollments } = await supabase
+              .from("alumnos_clases")
+              .select("alumno_id")
+              .eq("clase_id", clase.id);
 
-            if (studentIds.length > 0) {
-              const { data: studentsList } = await supabase
-                .from("alumnos")
-                .select("*")
-                .in("id", studentIds)
-                .order("nombre_completo", { ascending: true });
+            if (rawEnrollments && rawEnrollments.length > 0) {
+              const studentIds = rawEnrollments.map((e: any) => e.alumno_id).filter(Boolean);
+              if (studentIds.length > 0) {
+                const { data: studentsList } = await supabase
+                  .from("alumnos")
+                  .select("*")
+                  .in("id", studentIds)
+                  .order("nombre_completo", { ascending: true });
 
-              if (studentsList && studentsList.length > 0) {
-                classStudents = studentsList.map((s: any) => ({
-                  ...s,
-                  bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0,
-                  debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
-                }));
+                if (studentsList && studentsList.length > 0) {
+                  classStudents = studentsList.map((s: any) => ({
+                    ...s,
+                    bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0,
+                    debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
+                  }));
+                }
               }
             }
           }
-        } catch (errStep1) {
-          console.error("Error fetching alumnos_clases in student-app:", errStep1);
+        } catch (errStep) {
+          console.error("Error loading regular class roster in TeacherPortalView:", errStep);
         }
 
-        // Relational query fallback if 2-step returned 0
-        if (classStudents.length === 0) {
-          try {
-            const { data: enrolled, error: enrollError } = await supabase
-              .from("alumnos_clases")
-              .select(`
-                alumno_id,
-                alumnos (
-                  id,
-                  nombre_completo,
-                  telefono,
-                  email,
-                  plan_activo,
-                  clases_restantes,
-                  estado,
-                  sede,
-                  dni
-                )
-              `)
-              .eq("clase_id", clase.id);
+        // Deduplicate students by ID
+        const uniqueStudents = Array.from(
+          new Map(classStudents.map(s => [s.id, s])).values()
+        ).sort((a: any, b: any) => (a.nombre_completo || "").localeCompare(b.nombre_completo || "", "es"));
 
-            if (!enrollError && enrolled && enrolled.length > 0) {
-              classStudents = enrolled
-                .map((e: any) => (Array.isArray(e.alumnos) ? e.alumnos[0] : e.alumnos))
-                .filter((a: any) => a != null && a.id)
-                .map((s: any) => ({
-                  ...s,
-                  bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0,
-                  debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
-                }));
-            }
-          } catch (errStep2) {
-            console.error("Error in fallback enrolled query in student-app:", errStep2);
-          }
-        }
-
-        setRoster(classStudents);
+        setRoster(uniqueStudents);
 
         // Today's attendances
         const { data: asistenciasData } = await supabase
@@ -327,21 +408,40 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   const handleSelectClase = async (clase: any) => {
     setSelectedClase(clase);
     setRosterSearch("");
-    const defaultDate = calendarDays.find(d => normalizeDay(d.dayName) === normalizeDay(clase.dia_semana))?.dateISO || new Date().toISOString().split("T")[0];
-    setSelectedSessionDate(defaultDate);
-    await loadRosterForDate(clase, defaultDate);
+    if (isOpenClass(clase)) {
+      await syncReservasFromSupabase();
+      const sessions = getUpcomingSessionsForClass(clase, 8, "2026-09-14");
+      const sessionWithBookings = sessions.find(s => getSesionReservasCount(clase.id, s.dateISO) > 0);
+      const chosenDate = sessionWithBookings?.dateISO || sessions[0]?.dateISO || new Date().toISOString().split("T")[0];
+      setSelectedSessionDate(chosenDate);
+      await loadRosterForDate(clase, chosenDate);
+    } else {
+      const defaultDate = calendarDays.find(d => normalizeDay(d.dayName) === normalizeDay(clase.dia_semana))?.dateISO || new Date().toISOString().split("T")[0];
+      setSelectedSessionDate(defaultDate);
+      await loadRosterForDate(clase, defaultDate);
+    }
   };
 
   // Automatic reactivity: whenever selectedClase changes, guarantee roster loading
   useEffect(() => {
     if (selectedClase?.id) {
-      const defaultDate = selectedSessionDate || 
-        calendarDays.find(d => normalizeDay(d.dayName) === normalizeDay(selectedClase.dia_semana))?.dateISO || 
-        new Date().toISOString().split("T")[0];
-      if (!selectedSessionDate) {
-        setSelectedSessionDate(defaultDate);
+      if (isOpenClass(selectedClase)) {
+        const sessions = getUpcomingSessionsForClass(selectedClase, 8, "2026-09-14");
+        const sessionWithBookings = sessions.find(s => getSesionReservasCount(selectedClase.id, s.dateISO) > 0);
+        const chosenDate = selectedSessionDate || sessionWithBookings?.dateISO || sessions[0]?.dateISO || new Date().toISOString().split("T")[0];
+        if (!selectedSessionDate) {
+          setSelectedSessionDate(chosenDate);
+        }
+        loadRosterForDate(selectedClase, chosenDate);
+      } else {
+        const defaultDate = selectedSessionDate || 
+          calendarDays.find(d => normalizeDay(d.dayName) === normalizeDay(selectedClase.dia_semana))?.dateISO || 
+          new Date().toISOString().split("T")[0];
+        if (!selectedSessionDate) {
+          setSelectedSessionDate(defaultDate);
+        }
+        loadRosterForDate(selectedClase, defaultDate);
       }
-      loadRosterForDate(selectedClase, defaultDate);
     }
   }, [selectedClase?.id]);
 
@@ -730,32 +830,40 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                       </div>
 
                       <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none pt-1">
-                        {calendarDays
-                          .filter(d => normalizeDay(d.dayName) === normalizeDay(selectedClase.dia_semana))
-                          .map((day) => {
-                            const isSelected = selectedSessionDate === day.dateISO;
-                            return (
-                              <button
-                                key={day.dateISO}
-                                onClick={() => handleChangeSessionDate(day.dateISO)}
-                                className={`py-2 px-3 rounded-xl flex flex-col items-center justify-center transition-all cursor-pointer min-w-[65px] shrink-0 border text-center ${
-                                  isSelected
-                                    ? "bg-amber-400 text-slate-950 border-amber-300 font-extrabold shadow-md scale-105"
-                                    : "bg-[var(--color-bg)] text-slate-300 hover:bg-[var(--color-bg-hover)] border-[var(--color-border)]"
-                                }`}
-                              >
-                                <span className={`text-[9px] uppercase font-bold tracking-wider ${isSelected ? "text-slate-950" : "text-amber-400"}`}>
-                                  {day.isToday ? "Hoy" : day.dayShort}
-                                </span>
-                                <span className="text-base font-mono font-black leading-tight">
-                                  {day.dayNumber}
-                                </span>
-                                <span className="text-[8px] opacity-80 uppercase">
-                                  {day.monthShort}
-                                </span>
-                              </button>
-                            );
-                          })}
+                        {openClassSessions.map((day) => {
+                          const isSelected = selectedSessionDate === day.dateISO;
+                          const count = getSesionReservasCount(selectedClase.id, day.dateISO);
+                          return (
+                            <button
+                              key={day.dateISO}
+                              onClick={() => handleChangeSessionDate(day.dateISO)}
+                              className={`py-2 px-3 rounded-xl flex flex-col items-center justify-center transition-all cursor-pointer min-w-[72px] shrink-0 border text-center ${
+                                isSelected
+                                  ? "bg-amber-400 text-slate-950 border-amber-300 font-extrabold shadow-md scale-105"
+                                  : "bg-[var(--color-bg)] text-slate-300 hover:bg-[var(--color-bg-hover)] border-[var(--color-border)]"
+                              }`}
+                            >
+                              <span className={`text-[9px] uppercase font-bold tracking-wider ${isSelected ? "text-slate-950" : "text-amber-400"}`}>
+                                {day.isToday ? "Hoy" : day.dayShort}
+                              </span>
+                              <span className="text-base font-mono font-black leading-tight">
+                                {day.dayNumber}
+                              </span>
+                              <span className="text-[8px] opacity-80 uppercase">
+                                {day.monthShort}
+                              </span>
+                              <span className={`mt-1 px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold leading-none ${
+                                isSelected 
+                                  ? "bg-slate-950/20 text-slate-950" 
+                                  : count > 0 
+                                  ? "bg-amber-400/20 text-amber-300 border border-amber-400/30" 
+                                  : "text-slate-500"
+                              }`}>
+                                {count} {count === 1 ? "alumno" : "alumnos"}
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
