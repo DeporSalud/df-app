@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { QRCodeSVG } from "qrcode.react";
+import { QRCodeCanvas } from "qrcode.react";
 import { Calendar, User, QrCode, CreditCard, ShieldCheck, MapPin, Sparkles, LogOut, BookmarkCheck, Ticket, Flame, AlertTriangle, Clock, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useStudent } from "@/context/StudentContext";
@@ -220,13 +220,31 @@ export default function AppHome() {
               <span>Pase Digital de Acceso a Salas</span>
             </div>
 
-            {/* QR Container */}
-            <div className="p-4 bg-white rounded-2xl inline-block shadow-xl shadow-black/40 border-4 border-[var(--color-primary)]/30">
-              <QRCodeSVG
+            {/* QR Container (Blindado contra modo oscuro forzado e inversión de Android/Samsung) */}
+            <div 
+              className="p-4 bg-white rounded-2xl inline-block shadow-xl shadow-black/40 border-4 border-[var(--color-primary)]/30 qr-container"
+              style={{
+                forcedColorAdjust: "none",
+                WebkitPrintColorAdjust: "exact",
+                colorScheme: "light",
+                backgroundColor: "#ffffff",
+                isolation: "isolate",
+                filter: "none"
+              }}
+            >
+              <QRCodeCanvas
                 value={currentStudent?.nfc_token ? ("DF-STUDENT-" + currentStudent.nfc_token) : ("DF-" + (currentStudent?.id || "DEMO"))}
                 size={180}
                 level="H"
+                bgColor="#ffffff"
+                fgColor="#000000"
                 includeMargin={false}
+                style={{
+                  display: "block",
+                  borderRadius: "8px",
+                  forcedColorAdjust: "none",
+                  filter: "none"
+                }}
               />
             </div>
 

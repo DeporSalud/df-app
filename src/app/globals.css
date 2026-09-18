@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 :root {
+  color-scheme: dark;
   --color-bg: #0b132b;
   --color-bg-card: #1c2541;
   --color-bg-hover: #22305c;
@@ -92,4 +93,21 @@ h1, h2, h3, h4, h5, h6 {
 
 .animate-shake {
   animation: shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+/* Blindaje anti-inversión de colores para QR en modo oscuro forzado (Android / Samsung / Chrome) */
+.qr-container,
+[data-qr-container] {
+  forced-color-adjust: none !important;
+  -webkit-print-color-adjust: exact !important;
+  color-scheme: light !important;
+  background-color: #ffffff !important;
+  filter: none !important;
+  isolation: isolate !important;
+}
+
+.qr-container canvas {
+  forced-color-adjust: none !important;
+  filter: none !important;
+  display: block;
 }
