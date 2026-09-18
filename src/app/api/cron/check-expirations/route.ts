@@ -60,7 +60,9 @@ async function handleExpirationCheck(request: NextRequest) {
       if (student.bono_caducidad) {
         expDate = new Date(student.bono_caducidad);
       } else {
-        const base = student.creado_en ? new Date(student.creado_en) : new Date("2026-09-04T00:00:00Z");
+        const rawCreated = student.creado_en ? new Date(student.creado_en) : new Date("2026-09-14T00:00:00Z");
+        const seasonStart = new Date("2026-09-14T00:00:00Z");
+        const base = (!isNaN(rawCreated.getTime()) && rawCreated >= seasonStart) ? rawCreated : seasonStart;
         expDate = new Date(base);
         expDate.setMonth(expDate.getMonth() + 1);
       }

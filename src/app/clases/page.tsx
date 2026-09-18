@@ -128,7 +128,9 @@ function ClasesContent() {
   if (currentStudent?.bono_caducidad) {
     expirationDate = new Date(currentStudent.bono_caducidad);
   } else if (hasRemainingClasses) {
-    const base = (currentStudent as any)?.creado_en ? new Date((currentStudent as any).creado_en) : new Date("2026-09-04T00:00:00Z");
+    const rawCreated = (currentStudent as any)?.creado_en ? new Date((currentStudent as any).creado_en) : new Date("2026-09-14T00:00:00Z");
+    const seasonStart = new Date("2026-09-14T00:00:00Z");
+    const base = (!isNaN(rawCreated.getTime()) && rawCreated >= seasonStart) ? rawCreated : seasonStart;
     expirationDate = new Date(base);
     expirationDate.setMonth(expirationDate.getMonth() + 1);
   }
