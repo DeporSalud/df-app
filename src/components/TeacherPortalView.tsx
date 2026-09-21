@@ -29,7 +29,9 @@ import {
   DEFAULT_STUDIO2_OPEN_CLASSES,
   LEGACY_ID_MAP,
   cleanDateISO,
-  OpenClassReserva
+  OpenClassReserva,
+  getNextUpcomingSessionDate,
+  getTodayISO
 } from "@/lib/openClassService";
 
 const getDayOrder = (day: string) => {
@@ -410,11 +412,9 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
     setRosterSearch("");
     if (isOpenClass(clase)) {
       await syncReservasFromSupabase();
-      const sessions = getUpcomingSessionsForClass(clase, 8, "2026-09-14");
-      const sessionWithBookings = sessions.find(s => getSesionReservasCount(clase.id, s.dateISO) > 0);
-      const chosenDate = sessionWithBookings?.dateISO || sessions[0]?.dateISO || new Date().toISOString().split("T")[0];
-      setSelectedSessionDate(chosenDate);
-      await loadRosterForDate(clase, chosenDate);
+      const targetDate = getNextUpcomingSessionDate(clase);
+      setSelectedSessionDate(targetDate);
+      await loadRosterForDate(clase, targetDate);
     } else {
       const defaultDate = calendarDays.find(d => normalizeDay(d.dayName) === normalizeDay(clase.dia_semana))?.dateISO || new Date().toISOString().split("T")[0];
       setSelectedSessionDate(defaultDate);
@@ -426,13 +426,11 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   useEffect(() => {
     if (selectedClase?.id) {
       if (isOpenClass(selectedClase)) {
-        const sessions = getUpcomingSessionsForClass(selectedClase, 8, "2026-09-14");
-        const sessionWithBookings = sessions.find(s => getSesionReservasCount(selectedClase.id, s.dateISO) > 0);
-        const chosenDate = selectedSessionDate || sessionWithBookings?.dateISO || sessions[0]?.dateISO || new Date().toISOString().split("T")[0];
+        const targetDate = selectedSessionDate || getNextUpcomingSessionDate(selectedClase);
         if (!selectedSessionDate) {
-          setSelectedSessionDate(chosenDate);
+          setSelectedSessionDate(targetDate);
         }
-        loadRosterForDate(selectedClase, chosenDate);
+        loadRosterForDate(selectedClase, targetDate);
       } else {
         const defaultDate = selectedSessionDate || 
           calendarDays.find(d => normalizeDay(d.dayName) === normalizeDay(selectedClase.dia_semana))?.dateISO || 
