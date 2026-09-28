@@ -8,6 +8,8 @@ import {
   isTeacherProfile,
   isRegularClassStudent,
   hasPaidSeasonMatricula,
+  hasPurchasedSeptemberBono,
+  hasPaidOctoberRenewal,
   isPromoSeptiembreBono,
   isPromoSeptiembreActive,
 } from "@/lib/matriculaService";
@@ -210,6 +212,7 @@ export async function POST(req: NextRequest) {
     let isRegular = Boolean(clientIsRegular);
     let isAlreadyPaid = false;
     let studentVerifiedInDb = false;
+    let isSeptemberRenewal = false;
 
 function isValidUUID(str?: string | null): boolean {
   if (!str) return false;
@@ -273,6 +276,11 @@ function isValidUUID(str?: string | null): boolean {
           if (hasPaidSeasonMatricula(dbStudent)) {
             isAlreadyPaid = true;
           }
+
+          // Check if September bono buyer renewing in October (50% matricula discount = 7,50€)
+          if (hasPurchasedSeptemberBono(dbStudent) && !hasPaidOctoberRenewal(dbStudent) && !isRegular && !isTeacher) {
+            isSeptemberRenewal = true;
+          }
         }
       } catch (checkErr) {
         console.warn("[Redsys Create Payment] Error al consultar Supabase:", checkErr);
@@ -305,6 +313,7 @@ function isValidUUID(str?: string | null): boolean {
     // Regla de Matrícula:
     // ¡Los bonos de Promo Septiembre tienen MATRÍCULA 0,00€ GRATUITA SIEMPRE!
     // Para bonos regulares: Exenta si es regular, profesor o ya la pagó.
+    // Con descuento del 50% (7,50€) si compró bono en septiembre y renueva en octubre.
     const chargeMatricula =
       !isPromo &&
       !isTeacher &&
@@ -336,7 +345,7 @@ function isValidUUID(str?: string | null): boolean {
       unitAmount = isTeacher ? Math.round(basePrice * 0.90 * 100) : Math.round(basePrice * 100);
     }
 
-    const matriculaCents = chargeMatricula ? 1500 : 0;
+    const matriculaCents = chargeMatricula ? (isSeptemberRenewal ? 750 : 1500) : 0;
     const totalCents = unitAmount + matriculaCents;
     const totalEurosStr = (totalCents / 100).toFixed(2);
 
@@ -354,8 +363,9 @@ function isValidUUID(str?: string | null): boolean {
       isTeacher: isTeacher ? "true" : "false",
       isRegularStudent: isRegular ? "true" : "false",
       isPromo: isPromo ? "true" : "false",
+      isSeptemberRenewal: isSeptemberRenewal ? "true" : "false",
       isFirstBono: chargeMatricula ? "true" : "false",
-      matriculaCost: chargeMatricula ? "15.00" : "0.00",
+      matriculaCost: chargeMatricula ? (isSeptemberRenewal ? "7.50" : "15.00") : "0.00",
       totalAmount: totalEurosStr,
     };
 

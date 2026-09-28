@@ -56,7 +56,9 @@ import {
   isPromoSeptiembreActive, 
   isPromoSeptiembreBono, 
   PROMO_SEPTIEMBRE_BONOS, 
-  isRegularClassStudent 
+  isRegularClassStudent,
+  hasPurchasedSeptemberBono,
+  hasPaidOctoberRenewal
 } from "@/lib/matriculaService";
 
 function ClasesContent() {
@@ -490,6 +492,10 @@ function ClasesContent() {
           });
           const res = await fetch(`/api/redsys/verify-order?${queryParams.toString()}`);
           const data = await res.json();
+          if (typeof window !== "undefined" && currentStudent?.id) {
+            localStorage.setItem(`df_matricula_octubre_paid_${currentStudent.id}`, "true");
+            localStorage.setItem(`df_matricula_paid_${currentStudent.id}`, "true");
+          }
           if (refetchStudents) await refetchStudents();
           setModal({
             isOpen: true,
@@ -539,6 +545,10 @@ function ClasesContent() {
           });
           const data = await res.json();
           if (data.success) {
+            if (typeof window !== "undefined" && currentStudent?.id) {
+              localStorage.setItem(`df_matricula_octubre_paid_${currentStudent.id}`, "true");
+              localStorage.setItem(`df_matricula_paid_${currentStudent.id}`, "true");
+            }
             if (refetchStudents) await refetchStudents();
             setModal({
               isOpen: true,
@@ -727,7 +737,9 @@ function ClasesContent() {
           student_id: currentStudent.id,
           student_name: currentStudent.nombre_completo,
           student_email: currentStudent.email || "",
-          bono_nombre: isFirstBonoOfYear 
+          bono_nombre: calc?.exemptionType === "october_renewal_50"
+            ? `${selectedBonoForPayment.nombre} (+7,50€ Matrícula 50% Renovación)`
+            : isFirstBonoOfYear 
             ? `${selectedBonoForPayment.nombre} (+15€ Matrícula)` 
             : selectedBonoForPayment.nombre,
           bono_precio: `${totalAmount.toFixed(2)} €`,
@@ -754,7 +766,7 @@ function ClasesContent() {
     setModal({
       isOpen: true,
       title: "✓ Transferencia Notificada a Recepción",
-      message: `Hemos registrado tu solicitud para el ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) por Transferencia Bancaria.${isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : calc?.exemptionType === "regular" ? " (matrícula 0,00€ exenta por ser alumno de Clases Regulares)" : ""}\n\nTu solicitud ya aparece en tiempo real en la pantalla de Recepción. En cuanto comprueben el ingreso en la cuenta de Santander o CaixaBank, validarán tu bono y tus clases se activarán automáticamente.`,
+      message: `Hemos registrado tu solicitud para el ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) por Transferencia Bancaria.${calc?.exemptionType === "october_renewal_50" ? " (incluye 7,50 € de matrícula reducida al 50% por renovación de octubre)" : isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : calc?.exemptionType === "regular" ? " (matrícula 0,00€ exenta por ser alumno de Clases Regulares)" : ""}\n\nTu solicitud ya aparece en tiempo real en la pantalla de Recepción. En cuanto comprueben el ingreso en la cuenta de Santander o CaixaBank, validarán tu bono y tus clases se activarán automáticamente.`,
       type: "success",
       confirmText: "Aceptar"
     });
@@ -791,7 +803,9 @@ function ClasesContent() {
           student_id: currentStudent.id,
           student_name: currentStudent.nombre_completo,
           student_email: currentStudent.email || "",
-          bono_nombre: isFirstBonoOfYear 
+          bono_nombre: calc?.exemptionType === "october_renewal_50"
+            ? `${selectedBonoForPayment.nombre} (+7,50€ Matrícula 50% Renovación)`
+            : isFirstBonoOfYear 
             ? `${selectedBonoForPayment.nombre} (+15€ Matrícula)` 
             : selectedBonoForPayment.nombre,
           bono_precio: `${totalAmount.toFixed(2)} €`,
@@ -818,7 +832,7 @@ function ClasesContent() {
     setModal({
       isOpen: true,
       title: "✓ Solicitud Registrada",
-      message: `Hemos registrado tu petición para el ${selectedBonoForPayment.nombre} por un importe de ${totalAmount.toFixed(2)} €${isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : calc?.exemptionType === "regular" ? " (matrícula 0,00€ exenta por ser alumno de Clases Regulares)" : ""}.\n\nTu solicitud ya está en la pantalla de Recepción. Podrás abonarlo en el mostrador en efectivo o datáfono cuando asistas a tu clase.`,
+      message: `Hemos registrado tu petición para el ${selectedBonoForPayment.nombre} por un importe de ${totalAmount.toFixed(2)} €${calc?.exemptionType === "october_renewal_50" ? " (incluye 7,50 € de matrícula reducida al 50% por renovación de octubre)" : isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : calc?.exemptionType === "regular" ? " (matrícula 0,00€ exenta por ser alumno de Clases Regulares)" : ""}.\n\nTu solicitud ya está en la pantalla de Recepción. Podrás abonarlo en el mostrador en efectivo o datáfono cuando asistas a tu clase.`,
       type: "info",
       confirmText: "Aceptar"
     });
@@ -1191,7 +1205,7 @@ function ClasesContent() {
             </div>
 
             {/* --- PROMO OPEN CLASS • SOLO SEPTIEMBRE 2026 --- */}
-            {isPromoSeptiembreActive() && (
+            {isPromoSeptiembreActive() && !hasPurchasedSeptemberBono(currentStudent) && (
               <div className="relative rounded-3xl p-4 sm:p-6 bg-gradient-to-br from-amber-500/15 via-purple-950/30 to-black border-2 border-amber-500/40 shadow-2xl overflow-hidden space-y-4">
                 {/* Decorative background glow */}
                 <div className="absolute -top-24 -right-24 w-48 h-48 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
@@ -1380,7 +1394,7 @@ function ClasesContent() {
             )}
 
             {/* Separador hacia bonos estándar si la promo está activa */}
-            {isPromoSeptiembreActive() && (
+            {isPromoSeptiembreActive() && !hasPurchasedSeptemberBono(currentStudent) && (
               <div className="pt-2">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
                   <span>Tarifas Habituales de Temporada (Bonos Estándar)</span>
@@ -1461,6 +1475,27 @@ function ClasesContent() {
                 );
               }
 
+              if (testCalc.exemptionType === "october_renewal_50") {
+                return (
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-500/15 via-blue-500/15 to-purple-500/10 border border-purple-500/30 flex items-center justify-between text-xs text-purple-200 shadow-sm">
+                    <div className="flex items-center gap-2.5">
+                      <Sparkles size={20} className="shrink-0 text-purple-400 animate-pulse" />
+                      <div>
+                        <span className="font-bold block text-white text-xs">
+                          Tarifa Especial Renovación Octubre: <span className="text-purple-300 font-mono">50% Dto. en Matrícula (7,50 €)</span>
+                        </span>
+                        <span className="text-[11px] text-slate-300">
+                          Al haber adquirido un bono en septiembre, tu cuota de matrícula para la temporada 2026/2027 se reduce directamente al 50% (7,50 € en vez de 15,00 €). Aplicado automáticamente.
+                        </span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] bg-purple-500/25 border border-purple-400/40 text-purple-300 font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
+                      50% Matrícula (7,50€)
+                    </span>
+                  </div>
+                );
+              }
+
               return (
                 <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-xs text-amber-300 shadow-sm">
                   <div className="flex items-center gap-2.5">
@@ -1488,6 +1523,8 @@ function ClasesContent() {
                   ? `Comprar Bono (${bono.precio}) • Matrícula 0€`
                   : itemCalc?.exemptionType === "teacher"
                   ? `Comprar Bono Docente (${itemCalc.totalToPay.toFixed(2)} €)`
+                  : itemCalc?.exemptionType === "october_renewal_50"
+                  ? `Comprar Bono (${bono.precio} + 7,50€ Matrícula)`
                   : itemCalc?.matriculaCost && itemCalc.matriculaCost > 0
                   ? `Comprar Bono (${bono.precio} + 15€ Matrícula)`
                   : `Comprar Bono (${bono.precio})`;
@@ -1509,6 +1546,11 @@ function ClasesContent() {
                           {itemCalc?.exemptionType === "teacher" && (
                             <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
                               -10% DOCENTE • 0€ MATRÍCULA
+                            </span>
+                          )}
+                          {itemCalc?.exemptionType === "october_renewal_50" && (
+                            <span className="text-[9px] font-bold text-purple-300 bg-purple-500/20 px-2 py-0.5 rounded border border-purple-500/30">
+                              50% DTO. MATRÍCULA (7,50 €)
                             </span>
                           )}
                         </div>
@@ -1535,6 +1577,8 @@ function ClasesContent() {
                           <span className="text-emerald-400 font-semibold">✓ Matrícula Anual: 0,00€ (Exenta por ser alumno de Clases Regulares)</span>
                         ) : itemCalc?.exemptionType === "teacher" ? (
                           <span className="text-emerald-400 font-semibold">✓ Matrícula Anual: 0,00€ (Exenta por perfil Docente)</span>
+                        ) : itemCalc?.exemptionType === "october_renewal_50" ? (
+                          <span className="text-purple-300 font-semibold">✓ Matrícula Reducida: 7,50 € (50% Dto. Renovación Octubre)</span>
                         ) : itemCalc?.matriculaCost && itemCalc.matriculaCost > 0 ? (
                           <span className="text-amber-400 font-semibold">+ 15,00 € Matrícula Anual (1er bono)</span>
                         ) : (
@@ -1682,13 +1726,23 @@ function ClasesContent() {
                   )}
 
                   <div className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
-                    calc.matriculaCost > 0
+                    calc.exemptionType === "october_renewal_50"
+                      ? "bg-purple-500/10 border-purple-500/30 text-purple-200"
+                      : calc.matriculaCost > 0
                       ? "bg-amber-500/10 border-amber-500/25 text-amber-300"
                       : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
                   }`}>
                     <div>
-                      <span className="font-bold block">Matrícula Anual:</span>
-                      {calc.matriculaCost > 0 ? (
+                      <span className="font-bold block">
+                        {calc.exemptionType === "october_renewal_50"
+                          ? "Matrícula Reducida al 50%:"
+                          : "Matrícula Anual:"}
+                      </span>
+                      {calc.exemptionType === "october_renewal_50" ? (
+                        <span className="text-[10px] text-purple-300/90">
+                          Promoción Renovación Octubre (alumnos con bono en septiembre)
+                        </span>
+                      ) : calc.matriculaCost > 0 ? (
                         <span className="text-[10px] text-slate-400">Inscripción anual de temporada (alumnos nuevos Open Class)</span>
                       ) : (
                         <span className="text-[10px] text-emerald-300/80">
@@ -1703,7 +1757,9 @@ function ClasesContent() {
                       )}
                     </div>
                     <span className="font-bold font-mono">
-                      {calc.matriculaCost > 0
+                      {calc.exemptionType === "october_renewal_50"
+                        ? "+7,50 €"
+                        : calc.matriculaCost > 0
                         ? "+15,00 €"
                         : calc.exemptionType === "promo_septiembre"
                         ? "0,00€ (Matrícula Gratuita)"

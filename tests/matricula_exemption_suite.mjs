@@ -15,7 +15,9 @@ const {
   calculateBonoPriceAndMatricula, 
   isRegularClassStudent, 
   isTeacherProfile, 
-  hasPaidSeasonMatricula 
+  hasPaidSeasonMatricula,
+  hasPurchasedSeptemberBono,
+  hasPaidOctoberRenewal
 } = matriculaService;
 
 let testsPassed = 0;
@@ -168,6 +170,131 @@ test("[R3.4] Pase Mensual Ilimitado y Clase Suelta exentos de matrícula en 2ª 
 test("[R1.Edge3] assignedClassIds vacíos o nulos no otorgan condición de alumno regular", () => {
   assert.strictEqual(isRegularClassStudent({ id: "s_assign" }, { assignedClassIds: ["", "  "] }), false);
   assert.strictEqual(isTeacherProfile(undefined, undefined, "PROFESOR"), true);
+});
+
+test("[R4.1] Alumno con bono en septiembre que renueva en octubre: 50% matrícula (7,50 €) aplicada directamente", () => {
+  const sSep1 = { 
+    id: "zaira_test", 
+    nombre_completo: "Zaira Cristina Rius", 
+    plan_activo: "Promo Septiembre • 4 Clases (No Alumno)",
+    clases_restantes: 0,
+    matricula_pagada: false
+  };
+  assert.strictEqual(hasPurchasedSeptemberBono(sSep1), true);
+
+  const calc = calculateBonoPriceAndMatricula({
+    bonoId: "Bono 4 clases",
+    basePrice: 45,
+    student: sSep1
+  });
+
+  assert.strictEqual(calc.bonoPrice, 45.00);
+  assert.strictEqual(calc.matriculaCost, 7.50);
+  assert.strictEqual(calc.exemptionType, "october_renewal_50");
+  assert.strictEqual(calc.exemptionLabel, "7,50 € (50% Dto. Renovación Octubre)");
+  assert.strictEqual(calc.totalToPay, 52.50);
+  assert.strictEqual(calc.isFirstBonoOfYear, true);
+});
+
+test("[R4.2] Alumno con bono en septiembre (8 clases): renovación en octubre abona Bono 8 (57€) + 7,50€ matrícula = 64,50€", () => {
+  const sSep2 = { 
+    id: "sara_test", 
+    nombre_completo: "Sara Gutiérrez", 
+    plan_activo: "Promo Septiembre • 8 Clases (No Alumno)",
+    clases_restantes: 1,
+    matricula_pagada: false
+  };
+  assert.strictEqual(hasPurchasedSeptemberBono(sSep2), true);
+
+  const calc = calculateBonoPriceAndMatricula({
+    bonoId: "Bono 8 clases",
+    basePrice: 57,
+    student: sSep2
+  });
+
+  assert.strictEqual(calc.bonoPrice, 57.00);
+  assert.strictEqual(calc.matriculaCost, 7.50);
+  assert.strictEqual(calc.totalToPay, 64.50);
+});
+
+test("[R4.3] Alumno con bono en septiembre: en su 2ª compra de octubre tras pagar la matrícula reducida, matrícula es 0,00€", () => {
+  const sPaid = { 
+    id: "zaira_paid", 
+    nombre_completo: "Zaira Cristina Rius", 
+    plan_activo: "Bono 4 Clases (Renovación Octubre)",
+    matricula_octubre_pagada: true,
+    matricula_pagada: true,
+    clases_restantes: 2
+  };
+  assert.strictEqual(hasPaidOctoberRenewal(sPaid), true);
+
+  const calc = calculateBonoPriceAndMatricula({
+    bonoId: "Bono 8 clases",
+    basePrice: 57,
+    student: sPaid
+  });
+
+  assert.strictEqual(calc.bonoPrice, 57.00);
+  assert.strictEqual(calc.matriculaCost, 0.00);
+  assert.strictEqual(calc.exemptionType, "repeat_buyer");
+  assert.strictEqual(calc.totalToPay, 57.00);
+});
+
+test("[R4.4] Alumno de clases regulares con bono en septiembre: exención total (0,00€ matrícula)", () => {
+  const sRegularSep = { 
+    id: "paula_ruiz", 
+    nombre_completo: "Paula Ruiz", 
+    plan_activo: "Promo Septiembre • 4 Clases (Alumno DF)",
+    es_regular: true
+  };
+  const calc = calculateBonoPriceAndMatricula({
+    bonoId: "Bono 4 clases",
+    basePrice: 45,
+    student: sRegularSep
+  });
+
+  assert.strictEqual(calc.matriculaCost, 0.00);
+  assert.strictEqual(calc.exemptionType, "regular");
+  assert.strictEqual(calc.totalToPay, 45.00);
+});
+
+test("[R4.5] Profesor con bono en septiembre: exención total (0,00€ matrícula) y 10% dto docente", () => {
+  const sTeacherSep = { 
+    id: "lucia_munoz", 
+    nombre_completo: "Lucía Muñoz (docente)", 
+    plan_activo: "Promo Septiembre • 8 Clases (Alumno DF)"
+  };
+  const calc = calculateBonoPriceAndMatricula({
+    bonoId: "Bono 4 clases",
+    basePrice: 45,
+    student: sTeacherSep
+  });
+
+  assert.strictEqual(calc.bonoPrice, 40.50);
+  assert.strictEqual(calc.matriculaCost, 0.00);
+  assert.strictEqual(calc.exemptionType, "teacher");
+  assert.strictEqual(calc.totalToPay, 40.50);
+});
+
+test("[R4.6] Alumno completamente nuevo en octubre (sin bono en septiembre ni clases regulares): paga 15,00€ matrícula", () => {
+  const sNewOct = { 
+    id: "new_oct", 
+    nombre_completo: "Carlos Nuevo", 
+    plan_activo: "Sin plan activo",
+    creado_en: "2026-10-02T10:00:00Z"
+  };
+  assert.strictEqual(hasPurchasedSeptemberBono(sNewOct), false);
+
+  const calc = calculateBonoPriceAndMatricula({
+    bonoId: "Bono 4 clases",
+    basePrice: 45,
+    student: sNewOct
+  });
+
+  assert.strictEqual(calc.bonoPrice, 45.00);
+  assert.strictEqual(calc.matriculaCost, 15.00);
+  assert.strictEqual(calc.exemptionType, "none");
+  assert.strictEqual(calc.totalToPay, 60.00);
 });
 
 console.log("\n================================================================================");

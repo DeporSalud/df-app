@@ -111,7 +111,15 @@ const BONOS_DATA: Record<string, BonoDefinition> = {
   },
 };
 
-import { isTeacherProfile, isRegularClassStudent, hasPaidSeasonMatricula, isPromoSeptiembreBono, isPromoSeptiembreActive } from "@/lib/matriculaService";
+import { 
+  isTeacherProfile, 
+  isRegularClassStudent, 
+  hasPaidSeasonMatricula, 
+  hasPurchasedSeptemberBono,
+  hasPaidOctoberRenewal,
+  isPromoSeptiembreBono, 
+  isPromoSeptiembreActive 
+} from "@/lib/matriculaService";
 
 export async function POST(req: NextRequest) {
   try {
@@ -144,6 +152,7 @@ export async function POST(req: NextRequest) {
     let isRegular = Boolean(clientIsRegular);
     let isAlreadyPaid = false;
     let studentVerifiedInDb = false;
+    let isSeptemberRenewal = false;
 
     if (studentId || studentEmail) {
       try {
@@ -186,6 +195,11 @@ export async function POST(req: NextRequest) {
           if (hasPaidSeasonMatricula(dbStudent)) {
             isAlreadyPaid = true;
           }
+
+          // Check if September bono buyer renewing in October (50% matricula discount)
+          if (hasPurchasedSeptemberBono(dbStudent) && !hasPaidOctoberRenewal(dbStudent) && !isRegular && !isTeacher) {
+            isSeptemberRenewal = true;
+          }
         }
       } catch (checkErr) {
         console.warn("[Stripe Checkout] Warning checking student matricula in DB:", checkErr);
@@ -213,7 +227,9 @@ export async function POST(req: NextRequest) {
     // - Regular class student (R1)
     // - Teacher (R2)
     // - Repeat buyer who already paid matricula this season (R3)
-    // ONLY charged (+15,00€) if exclusive Open Class student on first purchase of regular bonos
+    // CHARGED:
+    // - 7,50€ if student bought a bono in September (October renewal with 50% discount)
+    // - 15,00€ if exclusive Open Class student on first purchase of regular bonos
     const chargeMatricula = !isPromo && !isTeacher && !isRegular && !isAlreadyPaid && (
       studentVerifiedInDb ? true : Boolean(isFirstBonoOfYear !== false)
     );
@@ -246,16 +262,23 @@ export async function POST(req: NextRequest) {
       },
     ];
 
-    // Add Annual Registration Fee (+15€) ONLY if student is exclusive Open Class on first purchase
+    const matriculaAmount = isSeptemberRenewal ? 750 : 1500;
+    const matriculaCostEuros = isSeptemberRenewal ? 7.50 : 15.00;
+
+    // Add Registration Fee (+7,50€ if September renewal, +15€ if new student)
     if (chargeMatricula) {
       lineItems.push({
         price_data: {
           currency: "eur",
           product_data: {
-            name: "Matrícula Anual Oficial (Temporada 2026-2027)",
-            description: "Cuota oficial de inscripción anual en Dance Factory Alcorcón",
+            name: isSeptemberRenewal
+              ? "Matrícula Reducida al 50% (Renovación Octubre)"
+              : "Matrícula Anual Oficial (Temporada 2026-2027)",
+            description: isSeptemberRenewal
+              ? "Promoción oficial 50% dto. para alumnos con bono en septiembre"
+              : "Cuota oficial de inscripción anual en Dance Factory Alcorcón",
           },
-          unit_amount: 1500, // 15.00 €
+          unit_amount: matriculaAmount,
         },
         quantity: 1,
       });
@@ -276,10 +299,11 @@ export async function POST(req: NextRequest) {
         isTeacher: isTeacher ? "true" : "false",
         isRegularStudent: isRegular ? "true" : "false",
         isPromoSeptiembre: isPromo ? "true" : "false",
+        isSeptemberRenewal: isSeptemberRenewal ? "true" : "false",
         bonoCaducidad: isPromo ? "2026-09-30T23:59:59.000Z" : "",
         isFirstBono: chargeMatricula ? "true" : "false",
-        matriculaCost: chargeMatricula ? "15.00" : "0.00",
-        totalAmount: ((unitAmount / 100) + (chargeMatricula ? 15.00 : 0.00)).toFixed(2),
+        matriculaCost: chargeMatricula ? matriculaCostEuros.toFixed(2) : "0.00",
+        totalAmount: ((unitAmount / 100) + (chargeMatricula ? matriculaCostEuros : 0.00)).toFixed(2),
       },
       success_url: `${origin}/clases?tab=bonos&payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/clases?tab=bonos&payment=cancelled`,
