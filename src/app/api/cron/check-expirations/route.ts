@@ -2,8 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/client";
 import { sendBonoExpiringEmail } from "@/lib/mailer";
 import { logActivity } from "@/lib/activityLogger";
+import { isPromoSeptiembreBono } from "@/lib/matriculaService";
 
 export const dynamic = "force-dynamic";
+
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: CORS_HEADERS,
+  });
+}
 
 export async function GET(request: NextRequest) {
   return handleExpirationCheck(request);
@@ -26,7 +40,7 @@ async function handleExpirationCheck(request: NextRequest) {
     // 1. Obtener alumnos con clases restantes a su favor
     let query = supabase
       .from("alumnos")
-      .select("id, nombre_completo, email, plan_activo, clases_restantes, bono_caducidad, creado_en")
+      .select("id, nombre_completo, email, plan_activo, clases_restantes, creado_en")
       .not("clases_restantes", "is", null)
       .gt("clases_restantes", 0);
 
@@ -38,7 +52,7 @@ async function handleExpirationCheck(request: NextRequest) {
 
     if (error) {
       console.error("[Check Expirations] Error al consultar alumnos:", error);
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return NextResponse.json({ success: false, error: error.message }, { status: 500, headers: CORS_HEADERS });
     }
 
     if (!students || students.length === 0) {
@@ -47,7 +61,7 @@ async function handleExpirationCheck(request: NextRequest) {
         message: "No se encontraron alumnos con bonos activos o saldo de clases pendiente.",
         processedCount: 0,
         emailsSent: 0,
-      });
+      }, { headers: CORS_HEADERS });
     }
 
     // 2. Comprobar cada alumno
@@ -55,10 +69,14 @@ async function handleExpirationCheck(request: NextRequest) {
       const email = student.email?.trim();
       if (!email) continue;
 
-      // Calcular fecha de expiración (desde base de datos o por defecto a 30 días de la creación)
+      // Calcular fecha de expiración
       let expDate: Date;
-      if (student.bono_caducidad) {
-        expDate = new Date(student.bono_caducidad);
+      const plan = (student.plan_activo || "").toLowerCase();
+      const isPromo = isPromoSeptiembreBono(student.plan_activo) || plan.includes("septiembre");
+
+      if (isPromo) {
+        // Los bonos de la promoción de septiembre caducan el 30 de septiembre de 2026 (23:59h hora peninsular española)
+        expDate = new Date("2026-09-30T20:00:00.000Z");
       } else {
         const rawCreated = student.creado_en ? new Date(student.creado_en) : new Date("2026-09-14T00:00:00Z");
         const seasonStart = new Date("2026-09-14T00:00:00Z");
@@ -156,12 +174,12 @@ async function handleExpirationCheck(request: NextRequest) {
       processedCount: processedList.length,
       emailsSent,
       students: processedList,
-    });
+    }, { headers: CORS_HEADERS });
   } catch (error: any) {
     console.error("[Check Expirations Error]:", error);
     return NextResponse.json(
       { success: false, error: error.message || "Error al procesar la verificación de caducidad." },
-      { status: 500 }
+      { status: 500, headers: CORS_HEADERS }
     );
   }
 }

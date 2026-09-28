@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useStudent } from "@/context/StudentContext";
 import StudentBottomNav from "@/components/StudentBottomNav";
 import TeacherPortalView from "@/components/TeacherPortalView";
+import { isPromoSeptiembreBono } from "@/lib/matriculaService";
 
 export default function AppHome() {
   const router = useRouter();
@@ -38,7 +39,13 @@ export default function AppHome() {
   const hasRemainingClasses = typeof currentStudent?.clases_restantes === "number" && currentStudent.clases_restantes > 0;
 
   let expirationDate: Date | null = null;
-  if (currentStudent?.bono_caducidad) {
+  const planLower = (currentStudent?.plan_activo || "").toLowerCase();
+  const isPromoSep = isPromoSeptiembreBono(currentStudent?.plan_activo) || planLower.includes("septiembre") || planLower.includes("promo sep");
+
+  if (isPromoSep) {
+    // Los bonos de la promo de septiembre caducan el 30 de septiembre
+    expirationDate = new Date("2026-09-30T20:00:00.000Z");
+  } else if (currentStudent?.bono_caducidad) {
     expirationDate = new Date(currentStudent.bono_caducidad);
   } else if (isBono && hasRemainingClasses) {
     const rawCreated = (currentStudent as any)?.creado_en ? new Date((currentStudent as any).creado_en) : new Date("2026-09-14T00:00:00Z");
