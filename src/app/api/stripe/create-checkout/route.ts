@@ -189,7 +189,7 @@ export async function POST(req: NextRequest) {
           const assignedIds = hasEnrollments ? enrollments.map((e: any) => e.clase_id) : [];
 
           // Check if regular class student (R1)
-          isRegular = isRegularClassStudent(dbStudent, { assignedClassIds: assignedIds, enrollmentsCount: assignedIds.length });
+          isRegular = isRegularClassStudent(dbStudent, { assignedClassIds: assignedIds });
 
           // Check if matricula already paid (R3)
           if (hasPaidSeasonMatricula(dbStudent)) {

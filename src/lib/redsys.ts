@@ -4,7 +4,7 @@ import crypto from "node:crypto";
  * Configuración oficial de Redsys TPV Virtual CaixaBank (Cyberpac)
  */
 export const REDSYS_CONFIG = {
-  merchantCode: process.env.REDSYS_MERCHANT_CODE || "369845862",
+  merchantCode: process.env.REDSYS_MERCHANT_CODE || "369911169",
   terminal: process.env.REDSYS_TERMINAL || "1",
   currency: process.env.REDSYS_CURRENCY || "978", // 978 = EUR
   secretKey: process.env.REDSYS_SECRET_KEY || "sq7HjrUOBfKmC576ILgskD5srU870gJ7",

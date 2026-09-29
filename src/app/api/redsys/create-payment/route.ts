@@ -269,7 +269,6 @@ function isValidUUID(str?: string | null): boolean {
 
           isRegular = isRegularClassStudent(dbStudent, {
             assignedClassIds: assignedIds,
-            enrollmentsCount: assignedIds.length,
           });
 
           // Ya pagada esta temporada
