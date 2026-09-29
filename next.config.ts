@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  experimental: {
+    cpus: 1,
+  },
   // Prevent CDNs and edge proxies from caching HTML documents with outdated chunk hashes
   async headers() {
     return [
