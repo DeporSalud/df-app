@@ -72,17 +72,20 @@ async function handleExpirationCheck(request: NextRequest) {
       // Calcular fecha de expiración
       let expDate: Date;
       const plan = (student.plan_activo || "").toLowerCase();
-      const isPromo = isPromoSeptiembreBono(student.plan_activo) || plan.includes("septiembre");
+      const isExplicitPromo = isPromoSeptiembreBono(student.plan_activo) || plan.includes("septiembre") || plan.includes("promo sep");
+      const rawCreated = student.creado_en ? new Date(student.creado_en) : null;
+      const isSepBono = (
+        isExplicitPromo ||
+        (rawCreated !== null && !isNaN(rawCreated.getTime()) && rawCreated < new Date("2026-10-01T00:00:00Z"))
+      );
 
-      if (isPromo) {
+      if (isSepBono) {
         // Los bonos de la promoción de septiembre caducan el 30 de septiembre de 2026 (23:59h hora peninsular española)
         expDate = new Date("2026-09-30T20:00:00.000Z");
       } else {
-        const rawCreated = student.creado_en ? new Date(student.creado_en) : new Date("2026-09-14T00:00:00Z");
-        const seasonStart = new Date("2026-09-14T00:00:00Z");
-        const base = (!isNaN(rawCreated.getTime()) && rawCreated >= seasonStart) ? rawCreated : seasonStart;
-        expDate = new Date(base);
-        expDate.setMonth(expDate.getMonth() + 1);
+        // Bonos regulares a partir de ahora: 1 mes (30 días naturales) desde la compra o activación
+        const baseDate = rawCreated && rawCreated >= new Date("2026-10-01T00:00:00Z") ? rawCreated : now;
+        expDate = new Date(baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
       }
 
       const diffMs = expDate.getTime() - now.getTime();

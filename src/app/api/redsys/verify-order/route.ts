@@ -59,6 +59,8 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    let calculatedCaducidad: string = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
     // 2. Si el webhook aún no llegó pero el navegador trajo los parámetros firmados por CaixaBank:
     if (!pagoData && merchantParamsB64 && receivedSignature && order) {
       try {
@@ -103,6 +105,7 @@ export async function GET(req: NextRequest) {
 
             const isPromo = isPromoSeptiembreBono(metadata.bonoId) || metadata.isPromo === "true";
             const expISO = isPromo ? "2026-09-30T23:59:59.000Z" : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+            calculatedCaducidad = expISO;
 
             if (studentToUpdate && targetUUID) {
               const curBal = typeof studentToUpdate.clases_restantes === "number" ? studentToUpdate.clases_restantes : 0;
@@ -172,6 +175,7 @@ export async function GET(req: NextRequest) {
       amount: pagoData?.importe ? `${pagoData.importe.toFixed(2)} €` : null,
       updatedBalance: studentData?.clases_restantes ?? null,
       planActivo: studentData?.plan_activo ?? null,
+      bonoCaducidad: calculatedCaducidad,
     });
   } catch (err: any) {
     return NextResponse.json(

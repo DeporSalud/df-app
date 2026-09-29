@@ -124,22 +124,34 @@ function ClasesContent() {
     };
   }, []);
 
-  // Cálculo de caducidad de bono para avisos en Open Class
+  // Cálculo de caducidad de bono para avisos en Open Class (30 días naturales para regulares, 30/09 para promo sep)
   const hasRemainingClasses = typeof currentStudent?.clases_restantes === "number" && currentStudent.clases_restantes > 0;
   let expirationDate: Date | null = null;
   const planLower = (currentStudent?.plan_activo || "").toLowerCase();
-  const isPromoSep = isPromoSeptiembreBono(currentStudent?.plan_activo) || planLower.includes("septiembre") || planLower.includes("promo sep");
+  const isExplicitPromoSep = isPromoSeptiembreBono(currentStudent?.plan_activo) || planLower.includes("septiembre") || planLower.includes("promo sep");
 
-  if (isPromoSep) {
-    expirationDate = new Date("2026-09-30T20:00:00.000Z");
+  let storedCaducidad: string | null = null;
+  if (typeof window !== "undefined" && currentStudent?.id) {
+    storedCaducidad = localStorage.getItem(`df_bono_caducidad_${currentStudent.id}`);
+  }
+
+  if (storedCaducidad) {
+    expirationDate = new Date(storedCaducidad);
   } else if (currentStudent?.bono_caducidad) {
     expirationDate = new Date(currentStudent.bono_caducidad);
   } else if (hasRemainingClasses) {
-    const rawCreated = (currentStudent as any)?.creado_en ? new Date((currentStudent as any).creado_en) : new Date("2026-09-14T00:00:00Z");
-    const seasonStart = new Date("2026-09-14T00:00:00Z");
-    const base = (!isNaN(rawCreated.getTime()) && rawCreated >= seasonStart) ? rawCreated : seasonStart;
-    expirationDate = new Date(base);
-    expirationDate.setMonth(expirationDate.getMonth() + 1);
+    const rawCreated = (currentStudent as any)?.creado_en ? new Date((currentStudent as any).creado_en) : null;
+    const isSepCreated = rawCreated && !isNaN(rawCreated.getTime()) && rawCreated < new Date("2026-10-01T00:00:00Z");
+    const hasOctRenewal = typeof window !== "undefined" && currentStudent?.id && localStorage.getItem(`df_matricula_octubre_paid_${currentStudent.id}`) === "true";
+
+    if ((isExplicitPromoSep || isSepCreated) && !hasOctRenewal) {
+      // Bonos de Septiembre (Promo tiempo limitado): caducan el 30 de septiembre de 2026 (23:59h hora Madrid)
+      expirationDate = new Date("2026-09-30T20:00:00.000Z");
+    } else {
+      // Bonos regulares a partir de ahora: 1 mes (30 días naturales) desde la compra o activación
+      const base = rawCreated && rawCreated >= new Date("2026-10-01T00:00:00Z") ? rawCreated : new Date();
+      expirationDate = new Date(base.getTime() + 30 * 24 * 60 * 60 * 1000);
+    }
   }
   const daysLeft = expirationDate ? Math.ceil((expirationDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null;
   const isExpiringSoon = daysLeft !== null && daysLeft <= 7 && daysLeft > 0 && hasRemainingClasses;
@@ -500,6 +512,11 @@ function ClasesContent() {
           if (typeof window !== "undefined" && currentStudent?.id) {
             localStorage.setItem(`df_matricula_octubre_paid_${currentStudent.id}`, "true");
             localStorage.setItem(`df_matricula_paid_${currentStudent.id}`, "true");
+            const expDate = data.bonoCaducidad || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+            localStorage.setItem(`df_bono_caducidad_${currentStudent.id}`, expDate);
+            localStorage.setItem(`df_bono_purchase_date_${currentStudent.id}`, new Date().toISOString());
+            window.dispatchEvent(new Event("df_reservas_updated"));
+            window.dispatchEvent(new Event("storage"));
           }
           if (refetchStudents) await refetchStudents();
           setModal({
@@ -553,6 +570,11 @@ function ClasesContent() {
             if (typeof window !== "undefined" && currentStudent?.id) {
               localStorage.setItem(`df_matricula_octubre_paid_${currentStudent.id}`, "true");
               localStorage.setItem(`df_matricula_paid_${currentStudent.id}`, "true");
+              const expDate = data.bonoCaducidad || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+              localStorage.setItem(`df_bono_caducidad_${currentStudent.id}`, expDate);
+              localStorage.setItem(`df_bono_purchase_date_${currentStudent.id}`, new Date().toISOString());
+              window.dispatchEvent(new Event("df_reservas_updated"));
+              window.dispatchEvent(new Event("storage"));
             }
             if (refetchStudents) await refetchStudents();
             setModal({

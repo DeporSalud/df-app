@@ -34,25 +34,37 @@ export default function AppHome() {
   const isSinPlan = plan.includes("sin plan") || plan.includes("pendiente") || !currentStudent?.plan_activo;
   const isBono = plan.includes("bono") || (typeof currentStudent?.clases_restantes === "number" && currentStudent.clases_restantes > 0);
 
-  // Cálculo de caducidad del bono (1 mes / 30 días)
+  // Cálculo de caducidad del bono (1 mes / 30 días para bonos regulares, 30 de septiembre para bonos de la promo septiembre)
   const classesCount = currentStudent?.clases_restantes ?? 0;
   const hasRemainingClasses = typeof currentStudent?.clases_restantes === "number" && currentStudent.clases_restantes > 0;
 
   let expirationDate: Date | null = null;
   const planLower = (currentStudent?.plan_activo || "").toLowerCase();
-  const isPromoSep = isPromoSeptiembreBono(currentStudent?.plan_activo) || planLower.includes("septiembre") || planLower.includes("promo sep");
+  const isExplicitPromoSep = isPromoSeptiembreBono(currentStudent?.plan_activo) || planLower.includes("septiembre") || planLower.includes("promo sep");
 
-  if (isPromoSep) {
-    // Los bonos de la promo de septiembre caducan el 30 de septiembre
-    expirationDate = new Date("2026-09-30T20:00:00.000Z");
+  // 1. Fecha de caducidad guardada en localStorage (compras directas) o en base de datos
+  let storedCaducidad: string | null = null;
+  if (typeof window !== "undefined" && currentStudent?.id) {
+    storedCaducidad = localStorage.getItem(`df_bono_caducidad_${currentStudent.id}`);
+  }
+
+  if (storedCaducidad) {
+    expirationDate = new Date(storedCaducidad);
   } else if (currentStudent?.bono_caducidad) {
     expirationDate = new Date(currentStudent.bono_caducidad);
   } else if (isBono && hasRemainingClasses) {
-    const rawCreated = (currentStudent as any)?.creado_en ? new Date((currentStudent as any).creado_en) : new Date("2026-09-14T00:00:00Z");
-    const seasonStart = new Date("2026-09-14T00:00:00Z");
-    const base = (!isNaN(rawCreated.getTime()) && rawCreated >= seasonStart) ? rawCreated : seasonStart;
-    expirationDate = new Date(base);
-    expirationDate.setMonth(expirationDate.getMonth() + 1);
+    const rawCreated = (currentStudent as any)?.creado_en ? new Date((currentStudent as any).creado_en) : null;
+    const isSepCreated = rawCreated && !isNaN(rawCreated.getTime()) && rawCreated < new Date("2026-10-01T00:00:00Z");
+    const hasOctRenewal = typeof window !== "undefined" && currentStudent?.id && localStorage.getItem(`df_matricula_octubre_paid_${currentStudent.id}`) === "true";
+
+    if ((isExplicitPromoSep || isSepCreated) && !hasOctRenewal) {
+      // Bonos de Septiembre (Promo tiempo limitado): caducan el 30 de septiembre de 2026 (23:59h hora Madrid)
+      expirationDate = new Date("2026-09-30T20:00:00.000Z");
+    } else {
+      // Bonos regulares a partir de ahora: 1 mes (30 días naturales) desde la compra o activación
+      const base = rawCreated && rawCreated >= new Date("2026-10-01T00:00:00Z") ? rawCreated : new Date();
+      expirationDate = new Date(base.getTime() + 30 * 24 * 60 * 60 * 1000);
+    }
   }
 
   const now = new Date();
