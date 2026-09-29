@@ -42,24 +42,28 @@ export default function AppHome() {
   const planLower = (currentStudent?.plan_activo || "").toLowerCase();
   const isExplicitPromoSep = isPromoSeptiembreBono(currentStudent?.plan_activo) || planLower.includes("septiembre") || planLower.includes("promo sep");
 
-  // 1. Fecha de caducidad guardada en localStorage (compras directas) o en base de datos
   let storedCaducidad: string | null = null;
   if (typeof window !== "undefined" && currentStudent?.id) {
     storedCaducidad = localStorage.getItem(`df_bono_caducidad_${currentStudent.id}`);
   }
 
-  if (storedCaducidad) {
-    expirationDate = new Date(storedCaducidad);
-  } else if (currentStudent?.bono_caducidad) {
-    expirationDate = new Date(currentStudent.bono_caducidad);
-  } else if (isBono && hasRemainingClasses) {
-    const rawCreated = (currentStudent as any)?.creado_en ? new Date((currentStudent as any).creado_en) : null;
-    const isSepCreated = rawCreated && !isNaN(rawCreated.getTime()) && rawCreated < new Date("2026-10-01T00:00:00Z");
-    const hasOctRenewal = typeof window !== "undefined" && currentStudent?.id && localStorage.getItem(`df_matricula_octubre_paid_${currentStudent.id}`) === "true";
+  const rawCreated = (currentStudent as any)?.creado_en ? new Date((currentStudent as any).creado_en) : null;
+  const isSepCreated = rawCreated && !isNaN(rawCreated.getTime()) && rawCreated < new Date("2026-10-01T00:00:00Z");
+  const hasOctRenewal = typeof window !== "undefined" && currentStudent?.id && localStorage.getItem(`df_matricula_octubre_paid_${currentStudent.id}`) === "true";
+  const isSeptemberBono = (isExplicitPromoSep || isSepCreated) && !hasOctRenewal;
 
-    if ((isExplicitPromoSep || isSepCreated) && !hasOctRenewal) {
-      // Bonos de Septiembre (Promo tiempo limitado): caducan el 30 de septiembre de 2026 (23:59h hora Madrid)
+  if (isBono && hasRemainingClasses) {
+    if (isSeptemberBono) {
+      // Todo bono o clase adquirido en septiembre (promoción especial) vence el 30 de septiembre de 2026 a las 23:59h
       expirationDate = new Date("2026-09-30T20:00:00.000Z");
+      // Limpiar de inmediato cualquier residuo previo (ej. 13 de octubre o 15 de octubre) en localStorage del dispositivo
+      if (typeof window !== "undefined" && currentStudent?.id && storedCaducidad !== "2026-09-30T20:00:00.000Z") {
+        localStorage.setItem(`df_bono_caducidad_${currentStudent.id}`, "2026-09-30T20:00:00.000Z");
+      }
+    } else if (storedCaducidad) {
+      expirationDate = new Date(storedCaducidad);
+    } else if (currentStudent?.bono_caducidad) {
+      expirationDate = new Date(currentStudent.bono_caducidad);
     } else {
       // Bonos regulares a partir de ahora: 1 mes (30 días naturales) desde la compra o activación
       const base = rawCreated && rawCreated >= new Date("2026-10-01T00:00:00Z") ? rawCreated : new Date();
