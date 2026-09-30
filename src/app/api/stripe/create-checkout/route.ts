@@ -305,7 +305,9 @@ export async function POST(req: NextRequest) {
         isRegularStudent: isRegular ? "true" : "false",
         isPromoSeptiembre: isPromo ? "true" : "false",
         isSeptemberRenewal: isSeptemberRenewal ? "true" : "false",
-        bonoCaducidad: isPromo ? "2026-09-30T23:59:59.000Z" : "",
+        bonoCaducidad: isPromo 
+          ? "2026-09-30T23:59:59.000Z" 
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
         isFirstBono: chargeMatricula ? "true" : "false",
         matriculaCost: chargeMatricula ? matriculaCostEuros.toFixed(2) : "0.00",
         totalAmount: ((unitAmount / 100) + (chargeMatricula ? matriculaCostEuros : 0.00)).toFixed(2),
