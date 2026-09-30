@@ -118,7 +118,8 @@ import {
   hasPurchasedSeptemberBono,
   hasPaidOctoberRenewal,
   isPromoSeptiembreBono, 
-  isPromoSeptiembreActive 
+  isPromoSeptiembreActive,
+  isClaseSueltaBono
 } from "@/lib/matriculaService";
 
 export async function POST(req: NextRequest) {
@@ -221,8 +222,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Check if single class pass (Clase Suelta: 1 sesión individual puntual)
+    const isSingleClass = isClaseSueltaBono(bono.id) || isClaseSueltaBono(bonoId) || bono.clasesCount === 1;
+
     // Matrícula charge rule:
     // EXEMPT (0,00€) if:
+    // - Single class pass (Clase Suelta: sesión individual puntual sin matrícula)
     // - Promo Septiembre Bono (¡Matrícula 100% Gratuita!)
     // - Regular class student (R1)
     // - Teacher (R2)
@@ -230,7 +235,7 @@ export async function POST(req: NextRequest) {
     // CHARGED:
     // - 7,50€ if student bought a bono in September (October renewal with 50% discount)
     // - 15,00€ if exclusive Open Class student on first purchase of regular bonos
-    const chargeMatricula = !isPromo && !isTeacher && !isRegular && !isAlreadyPaid && (
+    const chargeMatricula = !isSingleClass && !isPromo && !isTeacher && !isRegular && !isAlreadyPaid && (
       studentVerifiedInDb ? true : Boolean(isFirstBonoOfYear !== false)
     );
 

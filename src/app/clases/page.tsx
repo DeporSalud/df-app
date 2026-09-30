@@ -1537,7 +1537,7 @@ function ClasesContent() {
                         Alumnos Nuevos o Exclusivos de Open Class
                       </span>
                       <span className="text-[11px] text-amber-200/90">
-                        Se aplica la matrícula anual oficial (+15,00 €) en la 1ª compra de la temporada. En recargas posteriores el coste de matrícula será de 0,00 €.
+                        Se aplica la matrícula anual oficial (+15,00 €) en la 1ª compra de la temporada (excepto en Clase Suelta, sin matrícula). En recargas posteriores el coste de matrícula será de 0,00 €.
                       </span>
                     </div>
                   </div>
@@ -1551,7 +1551,9 @@ function ClasesContent() {
             <div className="space-y-3 pt-1">
               {bonosTarifas.map((bono) => {
                 const itemCalc = getBonoCalculation(bono);
-                const buttonText = itemCalc?.exemptionType === "regular"
+                const buttonText = itemCalc?.exemptionType === "clase_suelta"
+                  ? `Comprar Clase Suelta (${itemCalc.totalToPay.toFixed(2).replace(".", ",")} €) • Sin Matrícula`
+                  : itemCalc?.exemptionType === "regular"
                   ? `Comprar Bono (${bono.precio}) • Matrícula 0€`
                   : itemCalc?.exemptionType === "teacher"
                   ? `Comprar Bono Docente (${itemCalc.totalToPay.toFixed(2)} €)`
@@ -1570,6 +1572,11 @@ function ClasesContent() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <h3 className="text-lg font-[family-name:var(--font-heading)] text-white tracking-wide">{bono.nombre}</h3>
+                          {itemCalc?.exemptionType === "clase_suelta" && (
+                            <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                              0€ MATRÍCULA (CLASE SUELTA)
+                            </span>
+                          )}
                           {itemCalc?.exemptionType === "regular" && (
                             <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
                               0€ MATRÍCULA (REGULAR)
@@ -1605,7 +1612,9 @@ function ClasesContent() {
 
                     <div className="pt-3 mt-3 border-t border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2">
                       <div className="text-[11px]">
-                        {itemCalc?.exemptionType === "regular" ? (
+                        {itemCalc?.exemptionType === "clase_suelta" ? (
+                          <span className="text-emerald-400 font-semibold">✓ Matrícula: 0,00€ (Sesión puntual sin matrícula)</span>
+                        ) : itemCalc?.exemptionType === "regular" ? (
                           <span className="text-emerald-400 font-semibold">✓ Matrícula Anual: 0,00€ (Exenta por ser alumno de Clases Regulares)</span>
                         ) : itemCalc?.exemptionType === "teacher" ? (
                           <span className="text-emerald-400 font-semibold">✓ Matrícula Anual: 0,00€ (Exenta por perfil Docente)</span>
@@ -1758,7 +1767,9 @@ function ClasesContent() {
                   )}
 
                   <div className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
-                    calc.exemptionType === "october_renewal_50"
+                    calc.exemptionType === "clase_suelta"
+                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                      : calc.exemptionType === "october_renewal_50"
                       ? "bg-purple-500/10 border-purple-500/30 text-purple-200"
                       : calc.matriculaCost > 0
                       ? "bg-amber-500/10 border-amber-500/25 text-amber-300"
@@ -1766,11 +1777,17 @@ function ClasesContent() {
                   }`}>
                     <div>
                       <span className="font-bold block">
-                        {calc.exemptionType === "october_renewal_50"
+                        {calc.exemptionType === "clase_suelta"
+                          ? "Matrícula:"
+                          : calc.exemptionType === "october_renewal_50"
                           ? "Matrícula Reducida al 50%:"
                           : "Matrícula Anual:"}
                       </span>
-                      {calc.exemptionType === "october_renewal_50" ? (
+                      {calc.exemptionType === "clase_suelta" ? (
+                        <span className="text-[10px] text-emerald-300/90">
+                          Sesión puntual individual • Sin cargo de matrícula anual
+                        </span>
+                      ) : calc.exemptionType === "october_renewal_50" ? (
                         <span className="text-[10px] text-purple-300/90">
                           Promoción Renovación Octubre (alumnos con bono en septiembre)
                         </span>
@@ -1789,7 +1806,9 @@ function ClasesContent() {
                       )}
                     </div>
                     <span className="font-bold font-mono">
-                      {calc.exemptionType === "october_renewal_50"
+                      {calc.exemptionType === "clase_suelta"
+                        ? "0,00€ (Sin Matrícula)"
+                        : calc.exemptionType === "october_renewal_50"
                         ? "+7,50 €"
                         : calc.matriculaCost > 0
                         ? "+15,00 €"

@@ -12,6 +12,7 @@ import {
   hasPaidOctoberRenewal,
   isPromoSeptiembreBono,
   isPromoSeptiembreActive,
+  isClaseSueltaBono,
 } from "@/lib/matriculaService";
 
 interface BonoDefinition {
@@ -309,11 +310,15 @@ function isValidUUID(str?: string | null): boolean {
       );
     }
 
+    // Check if single class pass (Clase Suelta: 1 sesión individual puntual)
+    const isSingleClass = isClaseSueltaBono(bono.id) || isClaseSueltaBono(bonoId) || bono.clasesCount === 1;
+
     // Regla de Matrícula:
-    // ¡Los bonos de Promo Septiembre tienen MATRÍCULA 0,00€ GRATUITA SIEMPRE!
+    // ¡Los bonos de Promo Septiembre y Clases Sueltas tienen MATRÍCULA 0,00€ GRATUITA SIEMPRE!
     // Para bonos regulares: Exenta si es regular, profesor o ya la pagó.
     // Con descuento del 50% (7,50€) si compró bono en septiembre y renueva en octubre.
     const chargeMatricula =
+      !isSingleClass &&
       !isPromo &&
       !isTeacher &&
       !isRegular &&
