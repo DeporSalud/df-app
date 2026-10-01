@@ -6,7 +6,7 @@ import {
   UserCheck, Check, Clock, Users, ShieldAlert, Sparkles, Calendar, Search, 
   Lock, LogOut, KeyRound, ArrowLeft, ChevronRight, Flame, Ticket, GraduationCap, 
   CreditCard, Building2, Trash2, AlertTriangle, Tag, CheckCircle2, ShieldCheck, X, RefreshCw,
-  CalendarDays
+  CalendarDays, BarChart3, MessageCircle, Filter
 } from "lucide-react";
 import { logActivity } from "@/lib/activityLogger";
 import AppModal, { ModalState } from "@/components/AppModal";
@@ -28,6 +28,7 @@ import {
   getUpcomingSessionsForClass,
   DEFAULT_STUDIO2_OPEN_CLASSES,
   LEGACY_ID_MAP,
+  normalizeClaseId,
   cleanDateISO,
   OpenClassReserva,
   getNextUpcomingSessionDate,
@@ -47,6 +48,26 @@ const normalizeText = (text?: string | null): string => {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+};
+
+const isStudio1 = (sede?: string | null): boolean => {
+  const s = (sede || "").toLowerCase().trim();
+  return s === "tejar" || s === "mostoles" || s === "studio" || s === "studio 1";
+};
+
+const isRegularMembership = (plan?: string | null, remaining?: number | null): boolean => {
+  if (remaining === null) return true;
+  const p = (plan || "").toLowerCase();
+  return p.includes("regular") || p.includes("mensual") || p.includes("ilimitad") || p.includes("cuota");
+};
+
+const getMonthNameSpanish = (monthStr: string) => {
+  const months: Record<string, string> = {
+    "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
+    "05": "Mayo", "06": "Junio", "07": "Julio", "08": "Agosto",
+    "09": "Septiembre", "10": "Octubre", "11": "Noviembre", "12": "Diciembre"
+  };
+  return months[monthStr] || monthStr;
 };
 
 const isOpenClass = (clase: any) => {
@@ -76,6 +97,14 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   const [roster, setRoster] = useState<any[]>([]);
   const [rosterSearch, setRosterSearch] = useState<string>("");
   const [asistenciasRegistradas, setAsistenciasRegistradas] = useState<string[]>([]);
+  const [deductedStudentIds, setDeductedStudentIds] = useState<Set<string>>(new Set());
+
+  // Horario semanal por días & seguimiento de asistencias y faltas
+  const [dayScheduleFilter, setDayScheduleFilter] = useState<string>("HOY");
+  const [attendanceFilter, setAttendanceFilter] = useState<"todos" | "presentes" | "faltas">("todos");
+  const [classAllAttendances, setClassAllAttendances] = useState<any[]>([]);
+  const [isClassMonthlyModalOpen, setIsClassMonthlyModalOpen] = useState<boolean>(false);
+  const [selectedStudentForHistory, setSelectedStudentForHistory] = useState<any | null>(null);
   
   // Open Classes & Calendar State
   const calendarDays = getUpcomingCalendarDates(30);
@@ -83,9 +112,10 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   const [allOpenClasses, setAllOpenClasses] = useState<any[]>([]);
   const [openClassReservasVersion, setOpenClassReservasVersion] = useState<number>(0);
   
-  const openClassSessions = useMemo(() => {
-    if (!selectedClase || !isOpenClass(selectedClase)) return [];
-    return getUpcomingSessionsForClass(selectedClase, 8, "2026-09-14");
+  // Unified calendar sessions for ANY class (Regulares y Open Class)
+  const currentClassSessions = useMemo(() => {
+    if (!selectedClase) return [];
+    return getUpcomingSessionsForClass(selectedClase, 12, "2026-09-07");
   }, [selectedClase?.id, selectedClase?.dia_semana, openClassReservasVersion]);
   
   // Checkout
@@ -204,15 +234,35 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
 
   // Load Roster for a class and specific date
   const loadRosterForDate = async (clase: any, dateIso: string) => {
-    if (!clase?.id) return;
+    if (!clase?.id) {
+      setRoster([]);
+      setAsistenciasRegistradas([]);
+      setClassAllAttendances([]);
+      return;
+    }
     setIsLoading(true);
     try {
+      const classUUID = normalizeClaseId(clase.id);
+
+      // Fetch all recorded attendances for this class to calculate stats and per-session counts
+      const { data: allAttendancesData } = await supabase
+        .from("asistencias")
+        .select("id, alumno_id, fecha_hora")
+        .eq("clase_id", classUUID);
+
+      const allAtts = allAttendancesData || [];
+      setClassAllAttendances(allAtts);
+
+      // Filter for active session date
+      const activeSessionAtts = allAtts.filter(a => a.fecha_hora && a.fecha_hora.startsWith(dateIso));
+      setAsistenciasRegistradas(activeSessionAtts.map(a => a.alumno_id));
+
       if (isOpenClass(clase)) {
         // ALWAYS sync from Supabase first
         await syncReservasFromSupabase();
 
         // 1. Fetch from synced service
-        let sessionReservas = getReservasPorClaseYSesion(clase.id, dateIso);
+        let sessionReservas = getReservasPorClaseYSesion(classUUID, dateIso);
 
         // 2. Direct fallback to alumnos_clases in Supabase if service returns 0
         if (sessionReservas.length === 0) {
@@ -235,7 +285,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                 sede
               )
             `)
-            .eq("clase_id", clase.id);
+            .eq("clase_id", classUUID);
 
           const matchingDirect = (directRows || []).filter(r => {
             const rawDate = r.asignado_en ? cleanDateISO(r.asignado_en) : "";
@@ -264,16 +314,6 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
               };
             });
             setRoster(attendees);
-
-            const { data: asistenciasData } = await supabase
-              .from("asistencias")
-              .select("alumno_id")
-              .eq("clase_id", clase.id)
-              .gte("fecha_hora", dateIso + "T00:00:00")
-              .lte("fecha_hora", dateIso + "T23:59:59");
-
-            const ids = (asistenciasData || []).map((a: any) => a.alumno_id);
-            setAsistenciasRegistradas(ids);
             setIsLoading(false);
             return;
           }
@@ -307,97 +347,81 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
         });
 
         setRoster(attendees);
-
-        // Fetch attendances for this specific date
-        const { data: asistenciasData } = await supabase
-          .from("asistencias")
-          .select("alumno_id")
-          .eq("clase_id", clase.id)
-          .gte("fecha_hora", dateIso + "T00:00:00")
-          .lte("fecha_hora", dateIso + "T23:59:59");
-
-        const ids = (asistenciasData || []).map((a: any) => a.alumno_id);
-        setAsistenciasRegistradas(ids);
       } else {
-        // Regular class: fetch enrollments from alumnos_clases (mirroring Reception)
-        let classStudents: any[] = [];
+        // Regular class: robust 2-step query + relational fallback
+        let studentList: any[] = [];
 
         try {
-          const { data: enrolled, error: enrollError } = await supabase
+          const { data: rawEnrollments, error: rawErr } = await supabase
             .from("alumnos_clases")
-            .select(`
-              alumno_id,
-              asignado_en,
-              alumnos (
-                id,
-                nombre_completo,
-                telefono,
-                email,
-                plan_activo,
-                clases_restantes,
-                estado,
-                sede,
-                dni
-              )
-            `)
-            .eq("clase_id", clase.id);
+            .select("alumno_id")
+            .eq("clase_id", classUUID);
 
-          if (!enrollError && enrolled && enrolled.length > 0) {
-            classStudents = enrolled
-              .map((e: any) => (Array.isArray(e.alumnos) ? e.alumnos[0] : e.alumnos))
-              .filter((a: any) => a != null && a.id)
-              .map((s: any) => ({
-                ...s,
-                bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0,
-                debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
-              }));
-          } else {
-            // 2-step fallback
-            const { data: rawEnrollments } = await supabase
-              .from("alumnos_clases")
-              .select("alumno_id")
-              .eq("clase_id", clase.id);
+          if (!rawErr && rawEnrollments && rawEnrollments.length > 0) {
+            const studentIds = rawEnrollments
+              .map((e: any) => e.alumno_id)
+              .filter((id: any) => Boolean(id && typeof id === "string" && id.trim() !== ""));
 
-            if (rawEnrollments && rawEnrollments.length > 0) {
-              const studentIds = rawEnrollments.map((e: any) => e.alumno_id).filter(Boolean);
-              if (studentIds.length > 0) {
-                const { data: studentsList } = await supabase
-                  .from("alumnos")
-                  .select("*")
-                  .in("id", studentIds)
-                  .order("nombre_completo", { ascending: true });
+            if (studentIds.length > 0) {
+              const { data: studentsData, error: studentsErr } = await supabase
+                .from("alumnos")
+                .select("id, nombre_completo, telefono, email, plan_activo, clases_restantes, estado, sede, dni")
+                .in("id", studentIds);
 
-                if (studentsList && studentsList.length > 0) {
-                  classStudents = studentsList.map((s: any) => ({
-                    ...s,
-                    bono_agotado: s.clases_restantes !== null && s.clases_restantes <= 0,
-                    debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
-                  }));
-                }
+              if (!studentsErr && studentsData && studentsData.length > 0) {
+                studentList = studentsData.map((s: any) => ({
+                  ...s,
+                  bono_agotado: typeof s.clases_restantes === "number" && s.clases_restantes <= 0,
+                  debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
+                }));
               }
             }
           }
-        } catch (errStep) {
-          console.error("Error loading regular class roster in TeacherPortalView:", errStep);
+        } catch (errStep1) {
+          console.error("Error fetching enrolled student IDs:", errStep1);
+        }
+
+        if (studentList.length === 0) {
+          try {
+            const { data: enrolled, error: enrollError } = await supabase
+              .from("alumnos_clases")
+              .select(`
+                alumno_id,
+                alumnos (
+                  id,
+                  nombre_completo,
+                  telefono,
+                  email,
+                  plan_activo,
+                  clases_restantes,
+                  estado,
+                  sede,
+                  dni
+                )
+              `)
+              .eq("clase_id", classUUID);
+
+            if (!enrollError && enrolled && enrolled.length > 0) {
+              studentList = enrolled
+                .map((e: any) => (Array.isArray(e.alumnos) ? e.alumnos[0] : e.alumnos))
+                .filter((a: any) => a != null && a.id)
+                .map((s: any) => ({
+                  ...s,
+                  bono_agotado: typeof s.clases_restantes === "number" && s.clases_restantes <= 0,
+                  debe_cuota: s.estado === "Pendiente" || (s.plan_activo || "").toLowerCase().includes("pendiente")
+                }));
+            }
+          } catch (errStep2) {
+            console.error("Error fetching nested enrolled students:", errStep2);
+          }
         }
 
         // Deduplicate students by ID
         const uniqueStudents = Array.from(
-          new Map(classStudents.map(s => [s.id, s])).values()
+          new Map(studentList.map(s => [s.id, s])).values()
         ).sort((a: any, b: any) => (a.nombre_completo || "").localeCompare(b.nombre_completo || "", "es"));
 
         setRoster(uniqueStudents);
-
-        // Today's attendances
-        const { data: asistenciasData } = await supabase
-          .from("asistencias")
-          .select("alumno_id")
-          .eq("clase_id", clase.id)
-          .gte("fecha_hora", dateIso + "T00:00:00")
-          .lte("fecha_hora", dateIso + "T23:59:59");
-
-        const ids = (asistenciasData || []).map((a: any) => a.alumno_id);
-        setAsistenciasRegistradas(ids);
       }
     } catch (err) {
       console.error("Error loading roster:", err);
@@ -409,41 +433,35 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   // 2. Fetch Class Roster on Class Selection
   const handleSelectClase = async (clase: any) => {
     setSelectedClase(clase);
+    setRoster([]);
+    setAsistenciasRegistradas([]);
+    setClassAllAttendances([]);
+    setAttendanceFilter("todos");
     setRosterSearch("");
+
     if (isOpenClass(clase)) {
       await syncReservasFromSupabase();
-      const targetDate = getNextUpcomingSessionDate(clase);
-      setSelectedSessionDate(targetDate);
-      await loadRosterForDate(clase, targetDate);
-    } else {
-      const defaultDate = calendarDays.find(d => normalizeDay(d.dayName) === normalizeDay(clase.dia_semana))?.dateISO || new Date().toISOString().split("T")[0];
-      setSelectedSessionDate(defaultDate);
-      await loadRosterForDate(clase, defaultDate);
     }
-  };
 
-  // Automatic reactivity: whenever selectedClase changes, guarantee roster loading
-  useEffect(() => {
-    if (selectedClase?.id) {
-      if (isOpenClass(selectedClase)) {
-        const targetDate = selectedSessionDate || getNextUpcomingSessionDate(selectedClase);
-        if (!selectedSessionDate) {
-          setSelectedSessionDate(targetDate);
-        }
-        loadRosterForDate(selectedClase, targetDate);
+    const sessions = getUpcomingSessionsForClass(clase, 12, "2026-09-07");
+    const todayIso = getTodayISO();
+    const todaySession = sessions.find(s => s.dateISO === todayIso);
+    let targetDate = "";
+    if (todaySession) {
+      targetDate = todaySession.dateISO;
+    } else {
+      const pastSessions = sessions.filter(s => s.dateISO <= todayIso);
+      if (pastSessions.length > 0) {
+        targetDate = pastSessions[pastSessions.length - 1].dateISO;
       } else {
-        const defaultDate = selectedSessionDate || 
-          calendarDays.find(d => normalizeDay(d.dayName) === normalizeDay(selectedClase.dia_semana))?.dateISO || 
-          new Date().toISOString().split("T")[0];
-        if (!selectedSessionDate) {
-          setSelectedSessionDate(defaultDate);
-        }
-        loadRosterForDate(selectedClase, defaultDate);
+        targetDate = sessions[0]?.dateISO || todayIso;
       }
     }
-  }, [selectedClase?.id]);
+    setSelectedSessionDate(targetDate);
+    await loadRosterForDate(clase, targetDate);
+  };
 
-  // Switch session date in Open Class Attendance
+  // Switch session date in Attendance
   const handleChangeSessionDate = async (newDateIso: string) => {
     if (!selectedClase) return;
     setSelectedSessionDate(newDateIso);
@@ -466,34 +484,67 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
     };
   }, [selectedClase, selectedSessionDate]);
 
-  // 3. Mark Attendance
-  const handleToggleAsistencia = async (studentId: string, studentName: string) => {
-    if (!selectedClase) return;
-    setSavingId(studentId);
-
-    const isPresent = asistenciasRegistradas.includes(studentId);
+  // 3. Digital Roll Call Toggle
+  const handleToggleAsistencia = async (student: any) => {
+    if (!selectedClase?.id) return;
+    setSavingId(student.id);
     const targetDate = selectedSessionDate || new Date().toISOString().split("T")[0];
 
     try {
-      if (isPresent) {
+      const yaAsistio = asistenciasRegistradas.includes(student.id);
+      const isRegular = isRegularMembership(student.plan_activo, student.clases_restantes);
+
+      if (yaAsistio) {
+        if (!isRegular && typeof student.clases_restantes === "number") {
+          if (deductedStudentIds.has(student.id)) {
+            const refundedBalance = student.clases_restantes + 1;
+            await supabase
+              .from("alumnos")
+              .update({ clases_restantes: refundedBalance })
+              .eq("id", student.id);
+
+            setDeductedStudentIds(prev => {
+              const next = new Set(prev);
+              next.delete(student.id);
+              return next;
+            });
+          }
+        }
+
+        const selectedClassUUID = normalizeClaseId(selectedClase.id);
         await supabase
           .from("asistencias")
           .delete()
-          .eq("clase_id", selectedClase.id)
-          .eq("alumno_id", studentId)
+          .eq("alumno_id", student.id)
+          .eq("clase_id", selectedClassUUID)
           .gte("fecha_hora", targetDate + "T00:00:00")
           .lte("fecha_hora", targetDate + "T23:59:59");
 
-        setAsistenciasRegistradas(prev => prev.filter(id => id !== studentId));
+        setAsistenciasRegistradas(prev => prev.filter(id => id !== student.id));
+        setClassAllAttendances(prev => prev.filter(a => !(a.alumno_id === student.id && a.fecha_hora && a.fecha_hora.startsWith(targetDate))));
 
         logActivity({
           origen: "profesor",
-          tipo_evento: "asistencia_cancelada",
-          descripcion: "Profesor " + teacherName + " desmarcó asistencia de " + studentName + " en " + selectedClase.nombre_clase,
-          usuario_afectado: studentName,
+          tipo_evento: "asistencia_profesor",
+          descripcion: `Profesor ${teacherName} desmarcó asistencia (falta) a ${student.nombre_completo} en ${selectedClase.nombre_clase}`,
+          usuario_afectado: student.nombre_completo,
           sede: selectedClase.sede === "tejar" ? "Studio 1 Plaza El Tejar" : "Studio 2 Paseo Castilla"
         });
       } else {
+        const selectedClassUUID = normalizeClaseId(selectedClase.id);
+        const isPrepaidOpenClass = isOpenClass(selectedClase) || Boolean(student.reserva_id);
+
+        if (!isRegular && !isPrepaidOpenClass && typeof student.clases_restantes === "number" && student.clases_restantes > 0) {
+          const newBalance = Math.max(0, student.clases_restantes - 1);
+          await supabase
+            .from("alumnos")
+            .update({ clases_restantes: newBalance })
+            .eq("id", student.id);
+
+          setDeductedStudentIds(prev => new Set(prev).add(student.id));
+        }
+
+        // Construction of correct attendance timestamp in local timezone
         const now = new Date();
         const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
         let attendanceISO = now.toISOString();
@@ -504,26 +555,123 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
           attendanceISO = new Date(y, (m || 1) - 1, d || 1, h || 0, min || 0, 0).toISOString();
         }
 
-        await supabase
-          .from("asistencias")
-          .insert([{
-            alumno_id: studentId,
-            clase_id: selectedClase.id,
-            fecha_hora: attendanceISO
-          }]);
+        await supabase.from("asistencias").insert([{
+          alumno_id: student.id,
+          clase_id: selectedClassUUID,
+          fecha_hora: attendanceISO
+        }]);
 
-        setAsistenciasRegistradas(prev => [...prev, studentId]);
+        setAsistenciasRegistradas(prev => [...prev, student.id]);
+        setClassAllAttendances(prev => [...prev, {
+          id: "temp_" + Date.now(),
+          alumno_id: student.id,
+          fecha_hora: attendanceISO
+        }]);
 
         logActivity({
           origen: "profesor",
-          tipo_evento: "asistencia_pase_lista",
-          descripcion: "Profesor " + teacherName + " confirmó asistencia presencial de " + studentName + " en " + selectedClase.nombre_clase,
-          usuario_afectado: studentName,
+          tipo_evento: "asistencia_profesor",
+          descripcion: `Profesor ${teacherName} confirmó asistencia presencial de ${student.nombre_completo} en ${selectedClase.nombre_clase}`,
+          usuario_afectado: student.nombre_completo,
           sede: selectedClase.sede === "tejar" ? "Studio 1 Plaza El Tejar" : "Studio 2 Paseo Castilla"
         });
       }
-    } catch (e) {
-      console.error("Error updating attendance:", e);
+    } catch (err) {
+      console.error("Error in handleToggleAsistencia:", err);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleMarkAllPresent = async () => {
+    if (!selectedClase?.id || roster.length === 0) return;
+    setSavingId("ALL");
+    const targetDate = selectedSessionDate || getTodayISO();
+    const selectedClassUUID = normalizeClaseId(selectedClase.id);
+
+    try {
+      const studentsToMark = roster.filter(s => !asistenciasRegistradas.includes(s.id));
+      const now = new Date();
+      const todayStr = getTodayISO();
+      let attendanceISO = now.toISOString();
+
+      if (targetDate && targetDate !== todayStr) {
+        const [y, m, d] = targetDate.split("-").map(Number);
+        const [h, min] = (selectedClase.hora_inicio || "18:00").split(":").map(Number);
+        attendanceISO = new Date(y, (m || 1) - 1, d || 1, h || 0, min || 0, 0).toISOString();
+      }
+
+      const newCheckins: any[] = [];
+      for (const student of studentsToMark) {
+        const isRegular = isRegularMembership(student.plan_activo, student.clases_restantes);
+        const isPrepaidOpenClass = isOpenClass(selectedClase) || Boolean(student.reserva_id);
+
+        if (!isRegular && !isPrepaidOpenClass && typeof student.clases_restantes === "number" && student.clases_restantes > 0) {
+          const newBalance = Math.max(0, student.clases_restantes - 1);
+          await supabase
+            .from("alumnos")
+            .update({ clases_restantes: newBalance })
+            .eq("id", student.id);
+
+          setDeductedStudentIds(prev => new Set(prev).add(student.id));
+        }
+
+        newCheckins.push({
+          alumno_id: student.id,
+          clase_id: selectedClassUUID,
+          fecha_hora: attendanceISO
+        });
+      }
+
+      if (newCheckins.length > 0) {
+        await supabase.from("asistencias").insert(newCheckins);
+        setAsistenciasRegistradas(roster.map(s => s.id));
+        setClassAllAttendances(prev => [
+          ...prev.filter(a => !(a.fecha_hora && a.fecha_hora.startsWith(targetDate))),
+          ...newCheckins.map((c, i) => ({ id: "temp_all_" + i + "_" + Date.now(), ...c }))
+        ]);
+
+        logActivity({
+          origen: "profesor",
+          tipo_evento: "asistencia_profesor",
+          descripcion: `Profesor ${teacherName} hizo pase de lista masivo (${roster.length} alumnos) en ${selectedClase.nombre_clase} para la sesión ${targetDate}`,
+          usuario_afectado: `${teacherName} (Masivo)`,
+          sede: selectedClase.sede === "tejar" ? "Studio 1 Plaza El Tejar" : "Studio 2 Paseo Castilla"
+        });
+      }
+    } catch (err) {
+      console.error("Error in handleMarkAllPresent:", err);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleClearAllPresent = async () => {
+    if (!selectedClase?.id || asistenciasRegistradas.length === 0) return;
+    setSavingId("ALL");
+    const targetDate = selectedSessionDate || getTodayISO();
+    const selectedClassUUID = normalizeClaseId(selectedClase.id);
+
+    try {
+      await supabase
+        .from("asistencias")
+        .delete()
+        .eq("clase_id", selectedClassUUID)
+        .gte("fecha_hora", targetDate + "T00:00:00")
+        .lte("fecha_hora", targetDate + "T23:59:59");
+
+      setAsistenciasRegistradas([]);
+      setClassAllAttendances(prev => prev.filter(a => !(a.fecha_hora && a.fecha_hora.startsWith(targetDate))));
+
+      logActivity({
+        origen: "profesor",
+        tipo_evento: "asistencia_profesor",
+        descripcion: `Profesor ${teacherName} desmarcó la asistencia completa de la sesión ${targetDate} en ${selectedClase.nombre_clase}`,
+        usuario_afectado: `${teacherName} (Desmarcar Todo)`,
+        sede: selectedClase.sede === "tejar" ? "Studio 1 Plaza El Tejar" : "Studio 2 Paseo Castilla"
+      });
+    } catch (err) {
+      console.error("Error in handleClearAllPresent:", err);
     } finally {
       setSavingId(null);
     }
@@ -736,9 +884,61 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
     }
   };
 
-  const filteredRoster = roster.filter(s => 
-    s.nombre_completo?.toLowerCase().includes(rosterSearch.toLowerCase())
-  );
+  // Classes filtered by day schedule
+  const filteredClases = useMemo(() => {
+    let list = [...clasesProfesor];
+    if (dayScheduleFilter === "HOY") {
+      list = list.filter(c => normalizeDay(c.dia_semana) === normalizeDay(todayStr));
+    } else if (dayScheduleFilter !== "TODAS") {
+      const dayMap: Record<string, string> = {
+        "LUN": "LUNES",
+        "MAR": "MARTES",
+        "MIÉ": "MIÉRCOLES",
+        "JUE": "JUEVES",
+        "VIE": "VIERNES",
+        "SÁB": "SÁBADO"
+      };
+      list = list.filter(c => normalizeDay(c.dia_semana) === normalizeDay(dayMap[dayScheduleFilter]));
+    }
+    return list.sort((a, b) => {
+      if (dayScheduleFilter === "TODAS") {
+        if (getDayOrder(a.dia_semana) !== getDayOrder(b.dia_semana)) {
+          return getDayOrder(a.dia_semana) - getDayOrder(b.dia_semana);
+        }
+      }
+      return (a.hora_inicio || "00:00").localeCompare(b.hora_inicio || "00:00");
+    });
+  }, [clasesProfesor, dayScheduleFilter, todayStr]);
+
+  // Students in class filtered by search and attendance status (Todos / Presentes / Faltas)
+  const filteredRoster = useMemo(() => {
+    return roster.filter(s => {
+      const matchesSearch = !rosterSearch.trim() || 
+        (s.nombre_completo || "").toLowerCase().includes(rosterSearch.toLowerCase());
+      if (!matchesSearch) return false;
+
+      const isPresent = asistenciasRegistradas.includes(s.id);
+      if (attendanceFilter === "presentes") return isPresent;
+      if (attendanceFilter === "faltas") return !isPresent;
+      return true;
+    });
+  }, [roster, rosterSearch, asistenciasRegistradas, attendanceFilter]);
+
+  // Monthly stats helper per student
+  const getStudentMonthlyStats = (studentId: string) => {
+    const currentMonthPrefix = (selectedSessionDate || getTodayISO()).substring(0, 7);
+    const monthSessions = currentClassSessions.filter(
+      s => s.dateISO.startsWith(currentMonthPrefix) && s.dateISO <= getTodayISO()
+    );
+    const totalPossible = Math.max(1, monthSessions.length);
+    const attendedCount = classAllAttendances.filter(
+      a => a.alumno_id === studentId && a.fecha_hora && a.fecha_hora.startsWith(currentMonthPrefix)
+    ).length;
+    const faltasCount = Math.max(0, totalPossible - attendedCount);
+    const percent = Math.min(100, Math.round((attendedCount / totalPossible) * 100));
+
+    return { totalPossible, attendedCount, faltasCount, percent, currentMonthPrefix };
+  };
 
   return (
     <div className="flex flex-col flex-1 w-full bg-[var(--color-bg)] overflow-x-hidden text-left">
@@ -786,171 +986,316 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
           {/* VISTA 1: MIS CLASES & PASE DE LISTA */}
           {/* ==================================================== */}
           {activeTab === "mis_clases" && (
-            <div>
+            <div className="w-full">
               {selectedClase ? (
-                /* Detalle de Clase & Pase de Lista */
-                <div className="space-y-4 animate-in fade-in duration-200">
-                  <div className="flex items-center justify-between">
-                    <button
-                      onClick={() => setSelectedClase(null)}
-                      className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white bg-[var(--color-bg-card)] border border-[var(--color-border)] px-3 py-1.5 rounded-xl transition-all cursor-pointer"
-                    >
-                      <ArrowLeft size={14} />
-                      <span>Volver al Cuadrante</span>
-                    </button>
-                    <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
-                      {asistenciasRegistradas.length} presentes
-                    </span>
+                /* PASE DE LISTA DE LA CLASE SELECCIONADA */
+                <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl p-4 sm:p-5 shadow-xl w-full">
+                  {/* Botón Volver al Listado */}
+                  <button
+                    onClick={() => setSelectedClase(null)}
+                    className="flex items-center gap-1.5 text-xs font-bold text-[var(--color-secondary)] hover:text-white bg-[var(--color-bg)] px-3 py-2 rounded-xl border border-[var(--color-border)] mb-4 transition-all cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Volver a mis clases</span>
+                  </button>
+
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 pb-3 border-b border-[var(--color-border)] w-full">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <h3 className="font-[family-name:var(--font-heading)] text-xl font-bold text-white">
+                          {selectedClase.nombre_clase}
+                        </h3>
+                        <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-[var(--color-secondary)]/10 text-[var(--color-secondary)] border border-[var(--color-secondary)]/20 truncate">
+                          {selectedClase.dia_semana} {selectedClase.hora_inicio}-{selectedClase.hora_fin}
+                        </span>
+                        <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded ${
+                          isStudio1(selectedClase.sede) ? 'bg-[var(--color-secondary)]/10 text-[var(--color-secondary)]' : 'bg-amber-500/10 text-amber-300'
+                        }`}>
+                          {isStudio1(selectedClase.sede) ? 'Studio 1' : 'Studio 2'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400">Control de asistencia por sesión y seguimiento mensual</p>
+                    </div>
+                    
+                    <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto shrink-0">
+                      <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-full border border-emerald-500/20 shrink-0">
+                        {asistenciasRegistradas.length} / {roster.length} Presentes
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="bg-gradient-to-br from-[#141d33] to-[var(--color-bg-card)] border border-white/10 rounded-2xl p-4 shadow-xl space-y-2">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-secondary)] bg-[var(--color-secondary)]/10 px-2 py-0.5 rounded border border-[var(--color-secondary)]/20">
-                          {selectedClase.dia_semana}
-                        </span>
-                        <h2 className="text-xl font-bold font-[family-name:var(--font-heading)] text-white mt-1">
-                          {selectedClase.nombre_clase}
-                        </h2>
-                      </div>
-                      <span className="text-xs font-mono font-bold text-white bg-white/10 px-2.5 py-1 rounded-xl">
-                        {selectedClase.hora_inicio} - {selectedClase.hora_fin}
+                  {/* UNIFIED SESSION DATE SWITCHER (PARA TODAS LAS CLASES: REGULARES Y OPEN) */}
+                  <div className="space-y-2 bg-[var(--color-bg)] p-3.5 rounded-2xl border border-[var(--color-border)] shadow-md mb-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <CalendarDays size={13} className="text-[var(--color-secondary)]" />
+                        <span>Sesión a Pasar Lista:</span>
+                      </span>
+                      <span className="text-[10px] font-mono font-bold text-[var(--color-secondary)] bg-[var(--color-secondary)]/10 border border-[var(--color-secondary)]/20 px-2 py-0.5 rounded-full">
+                        {isOpenClass(selectedClase)
+                          ? `${roster.length} inscritos / ${selectedClase.aforo_maximo || 20} max`
+                          : `${roster.length} alumnos matriculados`}
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-4 text-xs text-slate-300 pt-1 border-t border-white/5">
-                      <span>🏢 {selectedClase.sede === "tejar" ? "Studio 1 El Tejar" : "Studio 2 Paseo Castilla"}</span>
-                      <span>🚪 {selectedClase.sala || "Sala Principal"}</span>
+                    <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none pt-1">
+                      {currentClassSessions.map((day) => {
+                        const isSelected = selectedSessionDate === day.dateISO;
+                        const sessionAttendeesCount = classAllAttendances.filter(a => a.fecha_hora && a.fecha_hora.startsWith(day.dateISO)).length;
+                        const openCount = isOpenClass(selectedClase) ? getSesionReservasCount(selectedClase.id, day.dateISO) : 0;
+
+                        return (
+                          <button
+                            key={day.dateISO}
+                            onClick={() => handleChangeSessionDate(day.dateISO)}
+                            className={`py-2 px-3 rounded-xl flex flex-col items-center justify-center transition-all cursor-pointer min-w-[76px] shrink-0 border text-center ${
+                              isSelected
+                                ? "bg-[var(--color-secondary)] text-slate-950 border-[var(--color-secondary)] font-extrabold shadow-md scale-105"
+                                : "bg-[var(--color-bg-card)] text-slate-300 hover:bg-[var(--color-bg-hover)] border-[var(--color-border)]"
+                            }`}
+                          >
+                            <span className={`text-[9px] uppercase font-bold tracking-wider ${isSelected ? "text-slate-950" : "text-[var(--color-secondary)]"}`}>
+                              {day.isToday ? "Hoy" : day.dayShort}
+                            </span>
+                            <span className="text-base font-mono font-black leading-tight">
+                              {day.dayNumber}
+                            </span>
+                            <span className="text-[8px] opacity-80 uppercase">
+                              {day.monthShort}
+                            </span>
+                            <span className={`mt-1 px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold leading-none ${
+                              isSelected 
+                                ? "bg-slate-950/20 text-slate-950" 
+                                : sessionAttendeesCount > 0 
+                                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" 
+                                : "text-slate-500"
+                            }`}>
+                              {isOpenClass(selectedClase) 
+                                ? (openCount > 0 ? `${openCount} res` : `${sessionAttendeesCount} pres`)
+                                : `${sessionAttendeesCount} pres`}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
-                  {/* Open Class Session Date Switcher */}
-                  {isOpenClass(selectedClase) && (
-                    <div className="space-y-2 bg-[var(--color-bg-card)] p-3.5 rounded-2xl border border-[var(--color-border)] shadow-md">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                          <CalendarDays size={13} className="text-amber-400" />
-                          <span>Sesión a Pasar Lista:</span>
-                        </span>
-                        <span className="text-[10px] font-mono font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
-                          {roster.length} inscritos / {selectedClase.aforo_maximo || 20} max
-                        </span>
-                      </div>
+                  {/* CONTROLES DEL ROSTER: FILTROS (TODOS/PRESENTES/FALTAS) & ACCIONES */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 mb-3.5">
+                    {/* Tabs de Filtro */}
+                    <div className="flex bg-[var(--color-bg)] p-1 rounded-xl border border-[var(--color-border)] text-xs">
+                      <button
+                        onClick={() => setAttendanceFilter("todos")}
+                        className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg font-bold transition-all text-center cursor-pointer ${
+                          attendanceFilter === "todos"
+                            ? "bg-[var(--color-bg-card)] text-white shadow-sm"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        Todos ({roster.length})
+                      </button>
+                      <button
+                        onClick={() => setAttendanceFilter("presentes")}
+                        className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg font-bold transition-all text-center flex items-center justify-center gap-1 cursor-pointer ${
+                          attendanceFilter === "presentes"
+                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shadow-sm"
+                            : "text-emerald-400/70 hover:text-emerald-300"
+                        }`}
+                      >
+                        <Check size={12} />
+                        <span>Presentes ({asistenciasRegistradas.length})</span>
+                      </button>
+                      <button
+                        onClick={() => setAttendanceFilter("faltas")}
+                        className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg font-bold transition-all text-center flex items-center justify-center gap-1 cursor-pointer ${
+                          attendanceFilter === "faltas"
+                            ? "bg-rose-500/20 text-rose-300 border border-rose-500/30 shadow-sm"
+                            : "text-rose-400/70 hover:text-rose-300"
+                        }`}
+                      >
+                        <X size={12} />
+                        <span>Faltas ({Math.max(0, roster.length - asistenciasRegistradas.length)})</span>
+                      </button>
+                    </div>
 
-                      <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none pt-1">
-                        {openClassSessions.map((day) => {
-                          const isSelected = selectedSessionDate === day.dateISO;
-                          const count = getSesionReservasCount(selectedClase.id, day.dateISO);
-                          return (
+                    {/* Acciones Rápidas */}
+                    <div className="flex items-center gap-1.5 shrink-0 justify-end flex-wrap">
+                      <button
+                        onClick={() => setIsClassMonthlyModalOpen(true)}
+                        className="text-xs font-bold bg-[var(--color-bg)] text-amber-400 hover:text-amber-300 border border-amber-500/30 hover:border-amber-500/50 px-2.5 py-1.5 rounded-xl transition-all flex items-center gap-1 shadow-sm cursor-pointer"
+                        title="Ver matriz y resumen mensual de asistencias de la clase"
+                      >
+                        <BarChart3 size={13} />
+                        <span>Resumen Mes</span>
+                      </button>
+
+                      {roster.length > 0 && (
+                        <>
+                          {asistenciasRegistradas.length < roster.length && (
                             <button
-                              key={day.dateISO}
-                              onClick={() => handleChangeSessionDate(day.dateISO)}
-                              className={`py-2 px-3 rounded-xl flex flex-col items-center justify-center transition-all cursor-pointer min-w-[72px] shrink-0 border text-center ${
-                                isSelected
-                                  ? "bg-amber-400 text-slate-950 border-amber-300 font-extrabold shadow-md scale-105"
-                                  : "bg-[var(--color-bg)] text-slate-300 hover:bg-[var(--color-bg-hover)] border-[var(--color-border)]"
-                              }`}
+                              onClick={handleMarkAllPresent}
+                              disabled={savingId === "ALL"}
+                              className="text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1.5 rounded-xl transition-all shadow-sm flex items-center gap-1 cursor-pointer"
                             >
-                              <span className={`text-[9px] uppercase font-bold tracking-wider ${isSelected ? "text-slate-950" : "text-amber-400"}`}>
-                                {day.isToday ? "Hoy" : day.dayShort}
-                              </span>
-                              <span className="text-base font-mono font-black leading-tight">
-                                {day.dayNumber}
-                              </span>
-                              <span className="text-[8px] opacity-80 uppercase">
-                                {day.monthShort}
-                              </span>
-                              <span className={`mt-1 px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold leading-none ${
-                                isSelected 
-                                  ? "bg-slate-950/20 text-slate-950" 
-                                  : count > 0 
-                                  ? "bg-amber-400/20 text-amber-300 border border-amber-400/30" 
-                                  : "text-slate-500"
-                              }`}>
-                                {count} {count === 1 ? "alumno" : "alumnos"}
-                              </span>
+                              <Check size={13} />
+                              <span>Todos Presentes</span>
                             </button>
-                          );
-                        })}
-                      </div>
+                          )}
+                          {asistenciasRegistradas.length > 0 && (
+                            <button
+                              onClick={handleClearAllPresent}
+                              disabled={savingId === "ALL"}
+                              className="text-xs font-bold bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 px-2.5 py-1.5 rounded-xl transition-all shadow-sm flex items-center gap-1 cursor-pointer"
+                            >
+                              <X size={13} />
+                              <span>Desmarcar Todos</span>
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Buscador de alumno dentro de la lista */}
+                  {roster.length > 0 && (
+                    <div className="relative mb-3.5 w-full">
+                      <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Buscar alumno o profesor en lista..."
+                        value={rosterSearch}
+                        onChange={(e) => setRosterSearch(e.target.value)}
+                        className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] text-white text-xs rounded-xl pl-9 pr-3 py-2.5 outline-none focus:border-[var(--color-secondary)] placeholder:text-slate-500"
+                      />
                     </div>
                   )}
 
-                  {/* Buscador de Alumnos en la Clase */}
-                  <div className="relative flex items-center">
-                    <Search className="absolute left-3.5 w-4 h-4 text-slate-400" />
-                    <input
-                      type="text"
-                      value={rosterSearch}
-                      onChange={(e) => setRosterSearch(e.target.value)}
-                      placeholder="Buscar alumno o profesor en esta clase..."
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[var(--color-bg-card)] border border-[var(--color-border)] text-white text-xs focus:outline-none focus:border-[var(--color-secondary)] transition-all placeholder:text-slate-500"
-                    />
-                  </div>
-
-                  {/* Roster List */}
-                  <div className="space-y-2">
-                    {filteredRoster.length === 0 ? (
-                      <p className="text-xs text-slate-400 py-6 text-center">
-                        {isOpenClass(selectedClase)
-                          ? "No hay alumnos ni profesores inscritos para esta sesión."
-                          : "No se encontraron alumnos con ese nombre."}
-                      </p>
-                    ) : (
-                      filteredRoster.map((student) => {
+                  {isLoading ? (
+                    <div className="py-8 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                      <div className="w-4 h-4 border-2 border-[var(--color-secondary)] border-t-transparent rounded-full animate-spin" />
+                      <span>Cargando alumnos de la clase...</span>
+                    </div>
+                  ) : roster.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-slate-400">
+                      {isOpenClass(selectedClase)
+                        ? "No hay alumnos ni profesores inscritos para esta sesión."
+                        : "No hay alumnos matriculados en esta clase."}
+                    </div>
+                  ) : filteredRoster.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-slate-400">
+                      {attendanceFilter === "faltas"
+                        ? "¡Genial! No hay faltas registradas en esta sesión. Todos los alumnos están marcados como presentes."
+                        : attendanceFilter === "presentes"
+                        ? "Todavía no se ha marcado ningún alumno como presente para esta sesión."
+                        : `No se encontraron alumnos coincidentes con la búsqueda "${rosterSearch}".`}
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-[450px] overflow-y-auto pr-0.5 w-full">
+                      {filteredRoster.map(student => {
                         const isPresent = asistenciasRegistradas.includes(student.id);
-                        const isSaving = savingId === student.id;
+                        const isRegular = isRegularMembership(student.plan_activo, student.clases_restantes);
+                        const isBonoExhausted = !isRegular && typeof student.clases_restantes === "number" && student.clases_restantes <= 0;
+                        const hasPendingPayment = student.estado === "Pendiente" || (student.plan_activo || "").toLowerCase().includes("pendiente");
+                        const stats = getStudentMonthlyStats(student.id);
 
                         return (
-                          <div
-                            key={student.id}
-                            className={"p-3.5 rounded-2xl border transition-all flex items-center justify-between gap-3 " + (
-                              isPresent
-                                ? "bg-emerald-500/10 border-emerald-500/40 shadow-sm"
-                                : "bg-[var(--color-bg-card)] border-[var(--color-border)] hover:border-slate-600"
-                            )}
+                          <div 
+                            key={student.id} 
+                            className={`p-3.5 rounded-xl border flex items-center justify-between gap-2 transition-all w-full ${
+                              isPresent 
+                                ? "bg-emerald-500/10 border-emerald-500/40" 
+                                : "bg-[var(--color-bg)] border-[var(--color-border)] hover:border-slate-600"
+                            }`}
                           >
                             <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <strong className="text-xs text-white font-semibold truncate block">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-xs sm:text-sm text-white truncate">
                                   {student.nombre_completo}
-                                </strong>
+                                </span>
                                 {student.is_docente && (
                                   <span className="text-[9px] font-bold text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded border border-amber-500/40">
                                     DOCENTE
                                   </span>
                                 )}
-                                {student.debe_cuota && (
-                                  <span className="text-[9px] font-bold text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
-                                    Pago Pendiente
+                                {isBonoExhausted && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-md shrink-0">
+                                    <AlertTriangle size={11} className="text-red-400" />
+                                    <span>Bono Agotado</span>
+                                  </span>
+                                )}
+                                {hasPendingPayment && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md shrink-0">
+                                    <Clock size={11} className="text-amber-400" />
+                                    <span>Pago Pendiente</span>
                                   </span>
                                 )}
                               </div>
-                              <p className="text-[10px] text-slate-400 mt-0.5 truncate">
-                                {student.plan_activo || "Open Class"} {student.fecha_reserva ? `• Inscrito para ${student.fecha_reserva}` : ""}
-                              </p>
+
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <span className="text-[11px] text-slate-400">
+                                  <strong className={isBonoExhausted ? "text-rose-400" : student.clases_restantes === 1 ? "text-amber-400" : "text-slate-300"}>
+                                    {isRegular ? "Mensualidad Regular" : `${student.clases_restantes ?? 0} ${(student.clases_restantes === 1) ? "clase" : "clases"}`}
+                                  </strong>
+                                </span>
+
+                                {/* Badge de Seguimiento Mensual (Interactivo para ver historial) */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedStudentForHistory(student);
+                                  }}
+                                  className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md border transition-all cursor-pointer ${
+                                    stats.faltasCount === 0
+                                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                                      : stats.faltasCount === 1
+                                      ? "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20"
+                                      : "bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/20"
+                                  }`}
+                                  title="Ver historial mensual detallado del alumno"
+                                >
+                                  <BarChart3 size={10} />
+                                  <span>
+                                    {stats.attendedCount}/{stats.totalPossible} este mes
+                                    {stats.faltasCount > 0 ? ` (${stats.faltasCount} ${stats.faltasCount === 1 ? 'falta' : 'faltas'})` : " (100%)"}
+                                  </span>
+                                </button>
+                              </div>
                             </div>
 
-                            <button
-                              onClick={() => handleToggleAsistencia(student.id, student.nombre_completo)}
-                              disabled={isSaving}
-                              className={"px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 active:scale-95 cursor-pointer " + (
-                                isPresent
-                                  ? "bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20"
-                                  : "bg-[var(--color-bg)] text-slate-300 border border-[var(--color-border)] hover:text-white"
-                              )}
-                            >
-                              <Check size={14} className={isPresent ? "text-slate-950 font-black stroke-[3]" : "text-slate-400"} />
-                              <span>{isPresent ? "Presente" : "Marcar"}</span>
-                            </button>
+                            {/* Botón de Pase de Lista: ✓ Presente / ✗ Falta */}
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                onClick={() => handleToggleAsistencia(student)}
+                                disabled={savingId === student.id}
+                                className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm min-h-[38px] cursor-pointer ${
+                                  isPresent
+                                    ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                                    : "bg-[var(--color-bg-card)] border border-rose-500/40 text-rose-300 hover:bg-rose-500/10"
+                                }`}
+                              >
+                                {savingId === student.id ? (
+                                  "Guardando..."
+                                ) : isPresent ? (
+                                  <>
+                                    <Check size={15} />
+                                    <span>Presente</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <X size={15} className="text-rose-400" />
+                                    <span>Falta</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           </div>
                         );
-                      })
-                    )}
-                  </div>
+                      })}
+                    </div>
+                  )}
                 </div>
               ) : (
-                /* Listado General de Mis Clases Semanales */
+                /* Listado General de Mis Clases Semanales con Selector por Días */
                 <div className="space-y-4">
                   <div className="flex justify-between items-center px-1">
                     <div>
@@ -964,6 +1309,41 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                     </span>
                   </div>
 
+                  {/* SELECTOR DE DÍAS DE LA SEMANA */}
+                  <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                    {["HOY", "LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB", "TODAS"].map((dayKey) => {
+                      const isSelected = dayScheduleFilter === dayKey;
+                      const dayMap: Record<string, string> = {
+                        "LUN": "LUNES", "MAR": "MARTES", "MIÉ": "MIÉRCOLES",
+                        "JUE": "JUEVES", "VIE": "VIERNES", "SÁB": "SÁBADO"
+                      };
+                      const count = dayKey === "TODAS" 
+                        ? clasesProfesor.length 
+                        : dayKey === "HOY" 
+                        ? clasesProfesor.filter(c => normalizeDay(c.dia_semana) === normalizeDay(todayStr)).length
+                        : clasesProfesor.filter(c => normalizeDay(c.dia_semana) === normalizeDay(dayMap[dayKey])).length;
+
+                      return (
+                        <button
+                          key={dayKey}
+                          onClick={() => setDayScheduleFilter(dayKey)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                            isSelected
+                              ? "bg-[var(--color-secondary)] text-slate-950 font-extrabold shadow-md shadow-[var(--color-secondary)]/20"
+                              : "bg-[var(--color-bg-card)] text-slate-400 hover:text-white border border-[var(--color-border)]"
+                          }`}
+                        >
+                          <span>{dayKey === "HOY" ? "📍 HOY" : dayKey}</span>
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                            isSelected ? "bg-slate-950/20 text-slate-950 font-black" : "bg-white/5 text-slate-400"
+                          }`}>
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   {isLoading ? (
                     <p className="text-xs text-slate-400 py-8 text-center">Cargando tus clases...</p>
                   ) : clasesProfesor.length === 0 ? (
@@ -972,10 +1352,24 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                       <p className="text-xs text-slate-300 font-semibold">No tienes clases asignadas en el cuadrante actual.</p>
                       <p className="text-[11px] text-slate-500">Contacta con administración si necesitas añadir nuevas asignaciones.</p>
                     </div>
+                  ) : filteredClases.length === 0 ? (
+                    <div className="p-8 rounded-2xl bg-[var(--color-bg-card)] border border-[var(--color-border)] text-center space-y-3">
+                      <p className="text-xs text-slate-300">
+                        {dayScheduleFilter === "HOY" 
+                          ? `No tienes clases asignadas programadas para hoy (${todayStr}).`
+                          : `No tienes clases asignadas programadas para este día.`}
+                      </p>
+                      <button
+                        onClick={() => setDayScheduleFilter("TODAS")}
+                        className="text-xs font-bold text-[var(--color-secondary)] bg-[var(--color-secondary)]/10 border border-[var(--color-secondary)]/30 hover:bg-[var(--color-secondary)] hover:text-slate-950 px-3 py-1.5 rounded-xl transition-all"
+                      >
+                        Ver todas tus clases ({clasesProfesor.length})
+                      </button>
+                    </div>
                   ) : (
                     <div className="space-y-2.5">
-                      {clasesProfesor.map((clase) => {
-                        const isToday = (clase.dia_semana || "").toUpperCase() === todayStr;
+                      {filteredClases.map((clase) => {
+                        const isToday = normalizeDay(clase.dia_semana) === normalizeDay(todayStr);
 
                         return (
                           <div
@@ -983,7 +1377,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                             onClick={() => handleSelectClase(clase)}
                             className={"p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 shadow-md " + (
                               isToday
-                                ? "bg-gradient-to-r from-[var(--color-primary)]/15 via-[var(--color-bg-card)] to-[var(--color-bg-card)] border-[var(--color-primary)]/40 hover:border-[var(--color-primary)]"
+                                ? "bg-gradient-to-r from-[var(--color-secondary)]/15 via-[var(--color-bg-card)] to-[var(--color-bg-card)] border-[var(--color-secondary)]/40 hover:border-[var(--color-secondary)]"
                                 : "bg-[var(--color-bg-card)] border-[var(--color-border)] hover:border-slate-600"
                             )}
                           >
@@ -1006,7 +1400,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                               </h3>
 
                               <div className="flex items-center gap-3 text-[11px] text-slate-400">
-                                <span>🏢 {clase.sede === "tejar" ? "Studio 1 El Tejar" : "Studio 2 Castilla"}</span>
+                                <span>🏢 {isStudio1(clase.sede) ? "Studio 1 El Tejar" : "Studio 2 Castilla"}</span>
                                 <span>🚪 {clase.sala || "Sala 1"}</span>
                               </div>
                             </div>
@@ -1407,6 +1801,303 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
             <div className="flex items-center justify-center gap-1 text-[10px] text-slate-400 text-center">
               <ShieldCheck size={14} className="text-[var(--color-secondary)] shrink-0" />
               <span>Quedará en STANDBY para abonar en recepción</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: RESUMEN MENSUAL DE LA CLASE */}
+      {isClassMonthlyModalOpen && selectedClase && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
+          <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden text-left">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-bg)] shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-[var(--color-secondary)]/15 text-[var(--color-secondary)] flex items-center justify-center shrink-0">
+                  <BarChart3 size={20} />
+                </div>
+                <div>
+                  <h3 className="font-[family-name:var(--font-heading)] text-base sm:text-lg font-bold text-white">
+                    Resumen Mensual de Asistencias
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    {selectedClase.nombre_clase} • {selectedClase.dia_semana} {selectedClase.hora_inicio}h ({getMonthNameSpanish((selectedSessionDate || getTodayISO()).substring(5, 7))} {(selectedSessionDate || getTodayISO()).substring(0, 4)})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsClassMonthlyModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-slate-400 hover:text-white flex items-center justify-center transition-all cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Modal Body: Scrollable Table */}
+            <div className="p-4 overflow-y-auto flex-1 space-y-4">
+              {/* Quick Month Metrics */}
+              {(() => {
+                const currentMonthPrefix = (selectedSessionDate || getTodayISO()).substring(0, 7);
+                const monthSessions = currentClassSessions.filter(s => s.dateISO.startsWith(currentMonthPrefix));
+                const pastSessions = monthSessions.filter(s => s.dateISO <= getTodayISO());
+                const pastSessionsCount = Math.max(1, pastSessions.length);
+                const totalClassAtts = classAllAttendances.filter(a => a.fecha_hora && a.fecha_hora.startsWith(currentMonthPrefix)).length;
+                const totalPossibleAll = roster.length * pastSessionsCount;
+                const classAttendanceRate = totalPossibleAll > 0 ? Math.round((totalClassAtts / totalPossibleAll) * 100) : 0;
+
+                return (
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="p-3 rounded-2xl bg-[var(--color-bg)] border border-[var(--color-border)]">
+                      <span className="text-[10px] text-slate-400 uppercase font-semibold block">Alumnos en Lista</span>
+                      <span className="text-lg font-mono font-bold text-white mt-0.5 block">{roster.length}</span>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-[var(--color-bg)] border border-[var(--color-border)]">
+                      <span className="text-[10px] text-slate-400 uppercase font-semibold block">Sesiones Impartidas</span>
+                      <span className="text-lg font-mono font-bold text-amber-400 mt-0.5 block">{pastSessions.length} / {monthSessions.length}</span>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-[var(--color-bg)] border border-[var(--color-border)]">
+                      <span className="text-[10px] text-slate-400 uppercase font-semibold block">Tasa Asistencia Mes</span>
+                      <span className="text-lg font-mono font-bold text-emerald-400 mt-0.5 block">{classAttendanceRate}%</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Matrix Table */}
+              {(() => {
+                const currentMonthPrefix = (selectedSessionDate || getTodayISO()).substring(0, 7);
+                const monthSessions = currentClassSessions.filter(s => s.dateISO.startsWith(currentMonthPrefix));
+                const pastSessions = monthSessions.filter(s => s.dateISO <= getTodayISO());
+                const pastSessionsCount = Math.max(1, pastSessions.length);
+
+                return (
+                  <div className="overflow-x-auto rounded-2xl border border-[var(--color-border)]">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-[var(--color-bg)] border-b border-[var(--color-border)] text-[11px] font-bold text-slate-300">
+                        <tr>
+                          <th className="p-3 font-semibold">Alumno ({roster.length})</th>
+                          {monthSessions.map((session) => (
+                            <th key={session.dateISO} className="p-2.5 text-center font-mono">
+                              <span className="block text-[10px] text-slate-400 uppercase">{session.dayShort}</span>
+                              <span className={`text-xs ${session.dateISO === selectedSessionDate ? "text-[var(--color-secondary)] font-black" : "text-slate-200"}`}>
+                                {session.dayNumber} {session.monthShort}
+                              </span>
+                            </th>
+                          ))}
+                          <th className="p-2.5 text-center font-semibold">Total Asist.</th>
+                          <th className="p-2.5 text-center font-semibold">Faltas</th>
+                          <th className="p-2.5 text-center font-semibold">%</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--color-border)]">
+                        {roster.map((student) => {
+                          const studentAtts = classAllAttendances.filter(
+                            a => a.alumno_id === student.id && a.fecha_hora && a.fecha_hora.startsWith(currentMonthPrefix)
+                          );
+                          const attendedCount = studentAtts.length;
+                          const faltasCount = Math.max(0, pastSessionsCount - attendedCount);
+                          const rate = Math.min(100, Math.round((attendedCount / pastSessionsCount) * 100));
+
+                          return (
+                            <tr 
+                              key={student.id} 
+                              onClick={() => setSelectedStudentForHistory(student)}
+                              className="hover:bg-white/5 transition-colors cursor-pointer group"
+                            >
+                              <td className="p-3 font-medium text-white max-w-[160px] truncate group-hover:text-[var(--color-secondary)]">
+                                {student.nombre_completo}
+                              </td>
+                              {monthSessions.map((session) => {
+                                const isPastOrToday = session.dateISO <= getTodayISO();
+                                const attendedSession = classAllAttendances.some(
+                                  a => a.alumno_id === student.id && a.fecha_hora && a.fecha_hora.startsWith(session.dateISO)
+                                );
+
+                                return (
+                                  <td key={session.dateISO} className="p-2 text-center">
+                                    {!isPastOrToday ? (
+                                      <span className="text-slate-600 text-xs">-</span>
+                                    ) : attendedSession ? (
+                                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-emerald-500/20 text-emerald-400 font-black text-xs border border-emerald-500/30">
+                                        ✓
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-rose-500/20 text-rose-400 font-black text-xs border border-rose-500/30">
+                                        ✗
+                                      </span>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                              <td className="p-2.5 text-center font-mono font-bold text-slate-200">
+                                {attendedCount} / {pastSessionsCount}
+                              </td>
+                              <td className="p-2.5 text-center font-mono font-bold">
+                                <span className={faltasCount === 0 ? "text-emerald-400" : faltasCount === 1 ? "text-amber-400" : "text-rose-400"}>
+                                  {faltasCount}
+                                </span>
+                              </td>
+                              <td className="p-2.5 text-center font-mono font-bold">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] ${
+                                  rate >= 80 
+                                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" 
+                                    : rate >= 50 
+                                    ? "bg-amber-500/20 text-amber-300 border border-amber-500/30" 
+                                    : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                                }`}>
+                                  {rate}%
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-[var(--color-border)] bg-[var(--color-bg)] flex justify-end shrink-0">
+              <button
+                onClick={() => setIsClassMonthlyModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-[var(--color-bg-card)] border border-[var(--color-border)] text-white hover:border-slate-500 transition-all cursor-pointer"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: HISTORIAL Y DETALLE DEL ALUMNO */}
+      {selectedStudentForHistory && selectedClase && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
+          <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-3xl w-full max-w-md max-h-[90vh] flex flex-col shadow-2xl overflow-hidden text-left">
+            {/* Header */}
+            <div className="p-4 sm:p-5 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-bg)] shrink-0">
+              <div className="min-w-0 flex-1">
+                <h3 className="font-[family-name:var(--font-heading)] text-base font-bold text-white truncate">
+                  {selectedStudentForHistory.nombre_completo}
+                </h3>
+                <p className="text-xs text-slate-400 truncate">
+                  {selectedStudentForHistory.plan_activo || "Alumno Regular"}
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedStudentForHistory(null)}
+                className="w-8 h-8 rounded-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-slate-400 hover:text-white flex items-center justify-center transition-all cursor-pointer shrink-0 ml-2"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-4 overflow-y-auto flex-1 space-y-4">
+              {/* Student Stats Summary */}
+              {(() => {
+                const stats = getStudentMonthlyStats(selectedStudentForHistory.id);
+                return (
+                  <div className="p-3.5 rounded-2xl bg-[var(--color-bg)] border border-[var(--color-border)] space-y-2">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-400">Asistencia este mes:</span>
+                      <span className="font-mono font-bold text-white">
+                        {stats.attendedCount} de {stats.totalPossible} clases ({stats.percent}%)
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                      <div 
+                        className={`h-full transition-all duration-300 ${
+                          stats.percent >= 80 ? "bg-emerald-500" : stats.percent >= 50 ? "bg-amber-500" : "bg-rose-500"
+                        }`}
+                        style={{ width: `${stats.percent}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between items-center text-[11px] pt-1">
+                      <span className="text-slate-400">Total Faltas:</span>
+                      <span className={`font-bold ${stats.faltasCount === 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                        {stats.faltasCount} {stats.faltasCount === 1 ? "falta" : "faltas"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Sessions Breakdown */}
+              <div className="space-y-2">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Desglose de Sesiones del Mes
+                </span>
+
+                <div className="space-y-1.5 max-h-[240px] overflow-y-auto pr-1">
+                  {currentClassSessions
+                    .filter(s => s.dateISO.startsWith((selectedSessionDate || getTodayISO()).substring(0, 7)))
+                    .map((session) => {
+                      const isPastOrToday = session.dateISO <= getTodayISO();
+                      const studentAtt = classAllAttendances.find(
+                        a => a.alumno_id === selectedStudentForHistory.id && a.fecha_hora && a.fecha_hora.startsWith(session.dateISO)
+                      );
+
+                      return (
+                        <div
+                          key={session.dateISO}
+                          className="p-2.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div>
+                            <span className="font-bold text-white block">
+                              {session.dayName} {session.dayNumber} de {session.monthName}
+                            </span>
+                            <span className="text-[10px] text-slate-400 block">
+                              {selectedClase.hora_inicio} - {selectedClase.hora_fin}h
+                            </span>
+                          </div>
+
+                          {!isPastOrToday ? (
+                            <span className="text-[10px] font-semibold text-slate-500 px-2 py-0.5 rounded bg-slate-800">
+                              Próxima
+                            </span>
+                          ) : studentAtt ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-md">
+                              <Check size={12} /> Asistió
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-400 bg-rose-500/15 border border-rose-500/30 px-2 py-0.5 rounded-md">
+                              <X size={12} /> Falta
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+
+              {/* WhatsApp Follow-up */}
+              {selectedStudentForHistory.telefono && (
+                <div className="pt-2">
+                  <a
+                    href={`https://wa.me/34${selectedStudentForHistory.telefono.replace(/\D/g, '')}?text=${encodeURIComponent(
+                      `Hola ${selectedStudentForHistory.nombre_completo}, te escribimos desde Dance Factory en relación a tus clases de ${selectedClase.nombre_clase} (${selectedClase.dia_semana} a las ${selectedClase.hora_inicio}h). Queríamos hacer seguimiento contigo. ¡Un saludo!`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all cursor-pointer"
+                  >
+                    <MessageCircle size={15} />
+                    <span>Contactar por WhatsApp (+34 {selectedStudentForHistory.telefono})</span>
+                  </a>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-[var(--color-border)] bg-[var(--color-bg)] flex justify-end shrink-0">
+              <button
+                onClick={() => setSelectedStudentForHistory(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-[var(--color-bg-card)] border border-[var(--color-border)] text-white hover:border-slate-500 transition-all cursor-pointer"
+              >
+                Cerrar
+              </button>
             </div>
           </div>
         </div>
