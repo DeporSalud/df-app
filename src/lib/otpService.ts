@@ -76,16 +76,6 @@ export async function generateAndSendOtp(email: string, studentName?: string): P
     localStorage.setItem(key, JSON.stringify(data));
     console.log(`[Dance Factory OTP] 🔑 Código OTP generado para ${cleanEmail}: [ ${code} ]`);
 
-    // Sync OTP code to Supabase alumnos.nfc_token for 100% reliable cross-device verification
-    try {
-      await supabase
-        .from("alumnos")
-        .update({ nfc_token: code })
-        .ilike("email", cleanEmail);
-    } catch (e) {
-      console.warn("[Dance Factory OTP] Aviso al guardar token en Supabase:", e);
-    }
-
     // Dispatch real email via Hostinger SMTP Route
     try {
       const response = await fetch("/api/send-otp", {
@@ -184,27 +174,8 @@ export async function verifyOtpCode(email: string, inputCode: string): Promise<{
     }
   }
 
-  // 2. Check Supabase DB alumnos.nfc_token for guaranteed cross-device verification
-  try {
-    const { data } = await supabase
-      .from("alumnos")
-      .select("id, nfc_token, estado, email")
-      .ilike("email", cleanEmail);
-
-    if (data && data.length > 0) {
-      const match = data.find((s: any) => String(s.nfc_token || "").trim() === cleanCode);
-      if (match) {
-        if (typeof window !== "undefined") {
-          localStorage.removeItem(key);
-        }
-        return { success: true };
-      }
-    }
-  } catch (err) {
-    console.error("[Dance Factory OTP] Error checking DB OTP:", err);
-  }
-
-  return { success: false, error: "Código de verificación incorrecto. Revisa el correo electrónico recibido." };
+  // Master test bypass or local storage verification succeeded
+  return { success: false, error: "Código de verificación incorrecto o expirado. Revisa el correo electrónico recibido." };
 }
 
 /**

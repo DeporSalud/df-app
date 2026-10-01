@@ -29,6 +29,30 @@ export default function AppHome() {
     return <TeacherPortalView initialTab="mis_clases" />;
   }
 
+  // Guard: If not authenticated or no student profile loaded, show login prompt
+  if (!isAuthenticated && !currentStudent) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[var(--color-bg)] p-6 text-center space-y-6 pb-28">
+        <div className="w-20 h-20 rounded-3xl bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 flex items-center justify-center text-[var(--color-primary)] shadow-2xl shadow-[var(--color-primary)]/20 animate-pulse">
+          <QrCode size={38} />
+        </div>
+        <div className="space-y-2 max-w-xs">
+          <h2 className="text-2xl font-bold text-white font-[family-name:var(--font-heading)]">Pase Digital de Alumno</h2>
+          <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+            Inicia sesión con tu correo electrónico para consultar tu carnet digital de acceso, saldo de bonos y horarios de clase.
+          </p>
+        </div>
+        <Link
+          href="/login"
+          className="px-8 py-3.5 rounded-2xl bg-gradient-to-r from-[var(--color-secondary)] to-[var(--color-primary)] text-white font-bold text-sm shadow-xl shadow-[var(--color-primary)]/25 active:scale-95 transition-all cursor-pointer"
+        >
+          Iniciar Sesión
+        </Link>
+        <StudentBottomNav />
+      </div>
+    );
+  }
+
   // Otherwise, render the Student Portal
   const plan = (currentStudent?.plan_activo || "").toLowerCase();
   const isSinPlan = plan.includes("sin plan") || plan.includes("pendiente") || !currentStudent?.plan_activo;

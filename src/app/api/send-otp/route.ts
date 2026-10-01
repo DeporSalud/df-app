@@ -28,17 +28,7 @@ export async function POST(req: NextRequest) {
     const cleanEmail = email.trim().toLowerCase();
     const cleanCode = code.trim();
 
-    // 1. Sync OTP directly to Supabase alumnos.nfc_token for 100% reliable verification
-    try {
-      await supabase
-        .from("alumnos")
-        .update({ nfc_token: cleanCode })
-        .ilike("email", cleanEmail);
-    } catch (dbErr) {
-      console.warn("[API /api/send-otp] Aviso al guardar token en Supabase:", dbErr);
-    }
-
-    // 2. Send email using Hostinger SMTP
+    // Send email using Hostinger SMTP (do NOT overwrite student's permanent nfc_token)
     const result = await sendOtpEmail({
       email: cleanEmail,
       code: cleanCode,

@@ -494,12 +494,22 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
           sede: selectedClase.sede === "tejar" ? "Studio 1 Plaza El Tejar" : "Studio 2 Paseo Castilla"
         });
       } else {
+        const now = new Date();
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+        let attendanceISO = now.toISOString();
+
+        if (targetDate && targetDate !== todayStr) {
+          const [y, m, d] = targetDate.split("-").map(Number);
+          const [h, min] = (selectedClase.hora_inicio || "18:00").split(":").map(Number);
+          attendanceISO = new Date(y, (m || 1) - 1, d || 1, h || 0, min || 0, 0).toISOString();
+        }
+
         await supabase
           .from("asistencias")
           .insert([{
             alumno_id: studentId,
             clase_id: selectedClase.id,
-            fecha_hora: targetDate + "T" + (selectedClase.hora_inicio || "18:00") + ":00.000Z"
+            fecha_hora: attendanceISO
           }]);
 
         setAsistenciasRegistradas(prev => [...prev, studentId]);

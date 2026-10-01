@@ -72,6 +72,7 @@ function ClasesContent() {
   const [modal, setModal] = useState<ModalState>({ isOpen: false, message: "" });
   const [activeTab, setActiveTab] = useState<"regulares" | "openclass" | "bonos">(initialTab);
   const [selectedBonoForPayment, setSelectedBonoForPayment] = useState<any | null>(null);
+  const [isExencionSolicitada, setIsExencionSolicitada] = useState<boolean>(false);
 
   if (userRole === "profesor") {
     const teacherTab = tabParam === "bonos" ? "comprar_bono" : tabParam === "openclass" ? "open_classes" : "mis_clases";
@@ -603,10 +604,10 @@ function ClasesContent() {
     }
   };
 
-  function getBonoCalculation(bono: any) {
+  function getBonoCalculation(bono: any, forceExencion?: boolean) {
     if (!bono) return null;
     const basePrice = parseFloat((bono.precio || "").replace(",", ".").replace(/[^0-9.]/g, "")) || 45;
-    return calculateBonoPriceAndMatricula({
+    const calc = calculateBonoPriceAndMatricula({
       bonoId: bono.id,
       basePrice,
       student: currentStudent,
@@ -614,6 +615,20 @@ function ClasesContent() {
       userRole,
       isPromoSeptiembre: bono.isPromo || isPromoSeptiembreBono(bono.id)
     });
+
+    const exencionActive = forceExencion !== undefined ? forceExencion : isExencionSolicitada;
+    if (exencionActive && calc.matriculaCost > 0) {
+      return {
+        ...calc,
+        matriculaCost: 0,
+        isExempt: true,
+        exemptionType: "regular" as const,
+        exemptionLabel: "0,00€ (Exención Autorizada por Dirección)",
+        totalToPay: calc.bonoPrice
+      };
+    }
+
+    return calc;
   }
 
   const handleStripeCheckout = async () => {
@@ -731,7 +746,9 @@ function ClasesContent() {
     const totalAmount = calc ? calc.totalToPay : basePrice;
     const isFirstBonoOfYear = calc ? calc.matriculaCost > 0 : false;
 
-    const planPendiente = `Pendiente: ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} € - Transferencia Bancaria)`;
+    const planPendiente = isExencionSolicitada
+      ? `Pendiente: ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} € - Transferencia - Exención Matrícula Autorizada)`
+      : `Pendiente: ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} € - Transferencia Bancaria)`;
 
     // 1. Sync directly to Supabase so Reception CRM sees it in real time
     try {
@@ -754,7 +771,9 @@ function ClasesContent() {
           student_id: currentStudent.id,
           student_name: currentStudent.nombre_completo,
           student_email: currentStudent.email || "",
-          bono_nombre: calc?.exemptionType === "october_renewal_50"
+          bono_nombre: isExencionSolicitada
+            ? `${selectedBonoForPayment.nombre} (Matrícula Exenta por Dirección)`
+            : calc?.exemptionType === "october_renewal_50"
             ? `${selectedBonoForPayment.nombre} (+7,50€ Matrícula 50% Renovación)`
             : isFirstBonoOfYear 
             ? `${selectedBonoForPayment.nombre} (+15€ Matrícula)` 
@@ -774,16 +793,17 @@ function ClasesContent() {
     logActivity({
       origen: "alumno",
       tipo_evento: "reserva_bono",
-      descripcion: `Solicitud de ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) por Transferencia Bancaria`,
+      descripcion: `Solicitud de ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) por Transferencia Bancaria${isExencionSolicitada ? " [Exención Matrícula Autorizada]" : ""}`,
       usuario_afectado: currentStudent.nombre_completo,
       sede: formatSedeName(currentStudent.sede || "tejar")
     });
 
     setSelectedBonoForPayment(null);
+    setIsExencionSolicitada(false);
     setModal({
       isOpen: true,
       title: "✓ Transferencia Notificada a Recepción",
-      message: `Hemos registrado tu solicitud para el ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) por Transferencia Bancaria.${calc?.exemptionType === "october_renewal_50" ? " (incluye 7,50 € de matrícula reducida al 50% por renovación de octubre)" : isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : calc?.exemptionType === "regular" ? " (matrícula 0,00€ exenta por ser alumno de Clases Regulares)" : ""}\n\nTu solicitud ya aparece en tiempo real en la pantalla de Recepción. En cuanto comprueben el ingreso en la cuenta de Santander o CaixaBank, validarán tu bono y tus clases se activarán automáticamente.`,
+      message: `Hemos registrado tu solicitud para el ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) por Transferencia Bancaria.${isExencionSolicitada ? " (Matrícula 0,00€ exenta por autorización de Dirección)" : calc?.exemptionType === "october_renewal_50" ? " (incluye 7,50 € de matrícula reducida al 50% por renovación de octubre)" : isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : calc?.exemptionType === "regular" ? " (matrícula 0,00€ exenta por ser alumno de Clases Regulares)" : ""}\n\nTu solicitud ya aparece en tiempo real en la pantalla de Recepción. En cuanto comprueben el ingreso en la cuenta de Santander o CaixaBank, validarán tu bono y tus clases se activarán automáticamente.`,
       type: "success",
       confirmText: "Aceptar"
     });
@@ -797,7 +817,9 @@ function ClasesContent() {
     const totalAmount = calc ? calc.totalToPay : basePrice;
     const isFirstBonoOfYear = calc ? calc.matriculaCost > 0 : false;
 
-    const planPendiente = `Pendiente: ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} € - Recepción)`;
+    const planPendiente = isExencionSolicitada
+      ? `Pendiente: ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} € - Recepción - Exención Matrícula Autorizada)`
+      : `Pendiente: ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} € - Recepción)`;
 
     // 1. Sync directly to Supabase so Reception CRM sees it in real time
     try {
@@ -820,7 +842,9 @@ function ClasesContent() {
           student_id: currentStudent.id,
           student_name: currentStudent.nombre_completo,
           student_email: currentStudent.email || "",
-          bono_nombre: calc?.exemptionType === "october_renewal_50"
+          bono_nombre: isExencionSolicitada
+            ? `${selectedBonoForPayment.nombre} (Matrícula Exenta por Dirección)`
+            : calc?.exemptionType === "october_renewal_50"
             ? `${selectedBonoForPayment.nombre} (+7,50€ Matrícula 50% Renovación)`
             : isFirstBonoOfYear 
             ? `${selectedBonoForPayment.nombre} (+15€ Matrícula)` 
@@ -840,16 +864,17 @@ function ClasesContent() {
     logActivity({
       origen: "alumno",
       tipo_evento: "reserva_bono",
-      descripcion: `Solicitud de ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) para abonar en recepción`,
+      descripcion: `Solicitud de ${selectedBonoForPayment.nombre} (${totalAmount.toFixed(2)} €) para abonar en recepción${isExencionSolicitada ? " [Exención Matrícula Autorizada]" : ""}`,
       usuario_afectado: currentStudent.nombre_completo,
       sede: formatSedeName(currentStudent.sede || "tejar")
     });
 
     setSelectedBonoForPayment(null);
+    setIsExencionSolicitada(false);
     setModal({
       isOpen: true,
       title: "✓ Solicitud Registrada",
-      message: `Hemos registrado tu petición para el ${selectedBonoForPayment.nombre} por un importe de ${totalAmount.toFixed(2)} €${calc?.exemptionType === "october_renewal_50" ? " (incluye 7,50 € de matrícula reducida al 50% por renovación de octubre)" : isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : calc?.exemptionType === "regular" ? " (matrícula 0,00€ exenta por ser alumno de Clases Regulares)" : ""}.\n\nTu solicitud ya está en la pantalla de Recepción. Podrás abonarlo en el mostrador en efectivo o datáfono cuando asistas a tu clase.`,
+      message: `Hemos registrado tu petición para el ${selectedBonoForPayment.nombre} por un importe de ${totalAmount.toFixed(2)} €${isExencionSolicitada ? " (Matrícula 0,00€ exenta por autorización de Dirección)" : calc?.exemptionType === "october_renewal_50" ? " (incluye 7,50 € de matrícula reducida al 50% por renovación de octubre)" : isFirstBonoOfYear ? " (incluye 15 € de matrícula anual)" : calc?.exemptionType === "regular" ? " (matrícula 0,00€ exenta por ser alumno de Clases Regulares)" : ""}.\n\nTu solicitud ya está en la pantalla de Recepción. Podrás abonarlo en el mostrador en efectivo o datáfono cuando asistas a tu clase.`,
       type: "info",
       confirmText: "Aceptar"
     });
@@ -1613,7 +1638,10 @@ function ClasesContent() {
                       </div>
 
                       <button
-                        onClick={() => setSelectedBonoForPayment(bono)}
+                        onClick={() => {
+                          setIsExencionSolicitada(false);
+                          setSelectedBonoForPayment(bono);
+                        }}
                         className="px-4 py-2 rounded-xl text-xs font-bold bg-[var(--color-secondary)] hover:bg-[var(--color-secondary)]/90 text-slate-950 transition-all shadow-lg shadow-[var(--color-secondary)]/20 active:scale-95 flex items-center gap-1.5 cursor-pointer"
                       >
                         <span>{buttonText}</span>
@@ -1724,7 +1752,10 @@ function ClasesContent() {
                 <h3 className="text-base font-extrabold text-white">Comprar {selectedBonoForPayment.nombre}</h3>
               </div>
               <button
-                onClick={() => setSelectedBonoForPayment(null)}
+                onClick={() => {
+                  setSelectedBonoForPayment(null);
+                  setIsExencionSolicitada(false);
+                }}
                 className="w-8 h-8 rounded-full bg-[var(--color-bg)] text-slate-400 hover:text-white flex items-center justify-center cursor-pointer border border-[var(--color-border)] transition-colors"
               >
                 ✕
@@ -1780,7 +1811,9 @@ function ClasesContent() {
                         <span className="text-[10px] text-slate-400">Inscripción anual de temporada (alumnos nuevos Open Class)</span>
                       ) : (
                         <span className="text-[10px] text-emerald-300/80">
-                          {calc.exemptionType === "promo_septiembre"
+                          {isExencionSolicitada
+                            ? "Exención manual autorizada por Dirección"
+                            : calc.exemptionType === "promo_septiembre"
                             ? "Promoción Especial Septiembre • Matrícula 100% Gratuita"
                             : calc.exemptionType === "regular"
                             ? "Abonada al formalizar el alta regular"
@@ -1800,7 +1833,7 @@ function ClasesContent() {
                         : calc.exemptionType === "promo_septiembre"
                         ? "0,00€ (Matrícula Gratuita)"
                         : calc.exemptionType === "regular"
-                        ? "0,00€ (Exenta por ser alumno de Clases Regulares)"
+                        ? (isExencionSolicitada ? "0,00€ (Exención Dirección)" : "0,00€ (Exenta por Clases Regulares)")
                         : calc.exemptionType === "teacher"
                         ? "0,00€ (Exenta por perfil Docente)"
                         : "0,00€ (Abonada)"}
@@ -1813,6 +1846,50 @@ function ClasesContent() {
                       {calc.totalToPay.toFixed(2).replace(".", ",")} €
                     </span>
                   </div>
+                </div>
+              );
+            })()}
+
+            {/* Toggle Exención de Matrícula (Si aplica matrícula anual de 15€ o 7,50€) */}
+            {(() => {
+              const defaultCalc = getBonoCalculation(selectedBonoForPayment, false);
+              if (!defaultCalc || defaultCalc.matriculaCost <= 0) return null;
+
+              return (
+                <div className="pt-0.5">
+                  {!isExencionSolicitada ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsExencionSolicitada(true)}
+                      className="w-full text-left p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 transition-all text-xs flex items-center justify-between cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 size={16} className="text-amber-400 shrink-0" />
+                        <div>
+                          <span className="font-bold text-amber-300 block">¿Autorización de Dirección para eximir matrícula?</span>
+                          <span className="text-[10px] text-slate-400">Pulsa aquí si Dirección/Lucía te ha autorizado a no abonar la matrícula.</span>
+                        </div>
+                      </div>
+                      <span className="text-[11px] font-bold text-amber-300 shrink-0 ml-2 bg-amber-500/20 px-2 py-0.5 rounded-lg border border-amber-500/30">Eximir 0€</span>
+                    </button>
+                  ) : (
+                    <div className="p-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-xs flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-emerald-300">
+                        <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                        <div>
+                          <span className="font-bold block">✓ Exención de Matrícula Aplicada (0,00 €)</span>
+                          <span className="text-[10px] text-emerald-300/80">Autorizada por Dirección para cobro en mostrador / transferencia</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsExencionSolicitada(false)}
+                        className="text-[11px] font-bold text-slate-400 hover:text-white underline cursor-pointer ml-2 shrink-0"
+                      >
+                        Deshacer
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })()}

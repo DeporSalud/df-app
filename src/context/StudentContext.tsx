@@ -147,13 +147,23 @@ const StudentContext = createContext<StudentContextType | undefined>(undefined);
 export function StudentProvider({ children }: { children: ReactNode }) {
   const [userRole, setUserRoleState] = useState<UserRole>("alumno");
   const [students, setStudents] = useState<Student[]>(INITIAL_STUDENTS);
-  const [currentStudentId, setCurrentStudentIdState] = useState<string>("demo_fran");
-  const [currentTeacherId, setCurrentTeacherIdState] = useState<string>("1001");
+  const [currentStudentId, setCurrentStudentIdState] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("df_student_session_id") || "";
+    }
+    return "";
+  });
+  const [currentTeacherId, setCurrentTeacherIdState] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("df_teacher_session_id") || "1001";
+    }
+    return "1001";
+  });
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     if (typeof window !== "undefined") {
       return !!localStorage.getItem("df_student_session_id") || !!localStorage.getItem("df_teacher_session_id");
     }
-    return true;
+    return false;
   });
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
@@ -377,10 +387,10 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         return { success: false, error: verification.error || "Código de verificación incorrecto." };
       }
 
-      // Activate student in Supabase & ensure nfc_token is synced
+      // Activate student in Supabase WITHOUT overwriting permanent nfc_token
       const { data: updatedList } = await supabase
         .from("alumnos")
-        .update({ estado: "Activo", nfc_token: code })
+        .update({ estado: "Activo" })
         .ilike("email", cleanEmail)
         .select();
 
@@ -398,6 +408,13 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       }
 
       if (targetStudent) {
+        // If student does not have an nfc_token yet, generate a 4-digit token
+        if (!targetStudent.nfc_token) {
+          const generatedCard = Math.floor(1000 + Math.random() * 9000).toString();
+          await supabase.from("alumnos").update({ nfc_token: generatedCard }).eq("id", targetStudent.id);
+          targetStudent.nfc_token = generatedCard;
+        }
+
         if (typeof window !== "undefined") {
           localStorage.setItem("df_auth_role", "alumno");
           localStorage.setItem("df_student_session_id", targetStudent.id);
@@ -449,9 +466,11 @@ export function StudentProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     setIsAuthenticated(false);
+    setCurrentStudentIdState("");
     if (typeof window !== "undefined") {
       localStorage.removeItem("df_student_session_id");
       localStorage.removeItem("df_teacher_session_id");
+      localStorage.removeItem("df_auth_role");
     }
   };
 
@@ -475,7 +494,9 @@ export function StudentProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const currentStudent = students.find(s => s.id === currentStudentId) || students[0] || FALLBACK_STUDENTS[0];
+  const currentStudent = (isAuthenticated && currentStudentId)
+    ? (students.find(s => s.id === currentStudentId) || null)
+    : null;
   const currentTeacher = PROFESORES_LIST.find(t => t.id === currentTeacherId) || PROFESORES_LIST[0];
 
   return (
