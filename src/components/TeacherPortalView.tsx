@@ -149,7 +149,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       precioDocente: "51,30 €", 
       precioNum: 51.30,
       popular: true,
-      desc: "8 clases • Validez 45 días • Ideal para complementar tu entrenamiento semanal" 
+      desc: "8 clases • Validez 30 días • Ideal para complementar tu entrenamiento semanal" 
     },
     { 
       id: "Bono 10 clases", 
@@ -158,7 +158,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       precioOriginal: "79,00 €",
       precioDocente: "71,10 €", 
       precioNum: 71.10,
-      desc: "10 clases • Validez 60 días • Máxima flexibilidad para toda la temporada" 
+      desc: "10 clases • Validez 30 días • Máxima flexibilidad para toda la temporada" 
     },
     { 
       id: "Mensualidad Ilimitada", 
@@ -167,7 +167,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       precioOriginal: "100,00 €",
       precioDocente: "90,00 €", 
       precioNum: 90.00,
-      desc: "Acceso total sin límite a todas las Open Classes y entrenamientos de la escuela" 
+      desc: "Acceso total sin límite a todas las Open Classes y entrenamientos de la escuela • Validez 30 días" 
     }
   ];
 
@@ -181,7 +181,11 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       // Find teacher in alumnos table or create fallback
       const { data: studentList } = await supabase.from("alumnos").select("*");
       const normName = normalizeText(teacherName);
-      let tStudent = (studentList || []).find(s => normalizeText(s.nombre_completo).includes(normName));
+      let tStudent = (studentList || []).find(s => {
+        if (s.id === "e9cc4200-aba2-4e67-8191-808c40e75621" && (currentTeacher?.id === "1014" || teacherName.includes("MARTA"))) return true;
+        if (s.email && currentTeacher?.email && s.email.toLowerCase() === currentTeacher.email.toLowerCase()) return true;
+        return normalizeText(s.nombre_completo).includes(normName);
+      });
 
       if (!tStudent) {
         tStudent = {

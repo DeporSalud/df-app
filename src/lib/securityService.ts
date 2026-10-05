@@ -166,6 +166,9 @@ export function registerFailedAttempt(role: "alumno" | "profesor", identifier?: 
 }
 
 export function getTeacherUuid(id: string): string {
+  if (id === "1014" || id === "e9cc4200-aba2-4e67-8191-808c40e75621") {
+    return "e9cc4200-aba2-4e67-8191-808c40e75621";
+  }
   const num = parseInt(id.replace(/\D/g, "") || "1000", 10);
   return `00000000-0000-0000-0000-${num.toString().padStart(12, "0")}`;
 }

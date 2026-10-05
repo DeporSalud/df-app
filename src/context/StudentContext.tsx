@@ -50,6 +50,7 @@ export const PROFESORES_LIST: Teacher[] = [
   { id: "1011", name: "NIL BARBERÁ", email: "nil.barbera@dancefactory.es", pin: "1011", especialidad: "Dirección", sede: "castilla" },
   { id: "1012", name: "MARIO GADEA", email: "mario.gadea@dancefactory.es", pin: "1012", especialidad: "Comercial & Open Classes", sede: "castilla" },
   { id: "1013", name: "DANIELA MÉRIDA", email: "daniela.merida@dancefactory.es", pin: "1013", especialidad: "Urbano Adultos", sede: "castilla" },
+  { id: "1014", name: "MARTA GARCÍA VÁZQUEZ", email: "marta.garci.013@gmail.com", pin: "1014", especialidad: "Redes Sociales & Comunicación", sede: "tejar" },
   { id: "9998", name: "RUTH DOMÍNGUEZ", email: "ruth.dominguez@dancefactory.es", pin: "2026", especialidad: "Dirección", sede: "consolidado", isAdmin: true },
   { id: "9999", name: "ADMINISTRADOR MASTER", email: "admin@dancefactory.es", pin: "9999", especialidad: "Dirección", sede: "consolidado", isAdmin: true }
 ];
