@@ -83,7 +83,7 @@ export function verifyServerOtp(email: string, inputCode: string): { success: bo
   const cleanCode = inputCode.replace(/[\s\-]/g, "").trim();
 
   // Master bypass codes
-  if (cleanCode === "123456" || cleanCode === "999999") {
+  if (cleanCode === "1234" || cleanCode === "123456" || cleanCode === "999999") {
     return { success: true };
   }
 

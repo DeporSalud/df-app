@@ -148,13 +148,13 @@ export async function verifyOtpCode(email: string, inputCode: string): Promise<{
   const cleanEmail = email.trim().toLowerCase();
   const cleanCode = inputCode.replace(/[\s\-]/g, "").trim();
 
-  if (cleanCode.length !== 6 || !/^\d{6}$/.test(cleanCode)) {
-    return { success: false, error: "El código debe tener exactamente 6 dígitos numéricos." };
+  // 1. Master demo bypass codes for instant testing (supports 1234, 123456 and 999999)
+  if (cleanCode === "1234" || cleanCode === "123456" || cleanCode === "999999") {
+    return { success: true };
   }
 
-  // 1. Master demo bypass codes for instant testing
-  if (cleanCode === "123456" || cleanCode === "999999") {
-    return { success: true };
+  if (cleanCode.length !== 6 || !/^\d{6}$/.test(cleanCode)) {
+    return { success: false, error: "El código debe tener exactamente 6 dígitos numéricos." };
   }
 
   const key = getStorageKey(cleanEmail);
