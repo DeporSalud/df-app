@@ -77,7 +77,12 @@ export default function LoginPage() {
 
   // Student Form (100% Passwordless OTP)
   const [studentEmail, setStudentEmail] = useState("");
-  const [otpModalEmail, setOtpModalEmail] = useState<string | null>(null);
+  const [otpModalEmail, setOtpModalEmail] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("df_pending_otp_email") || null;
+    }
+    return null;
+  });
 
   // Teacher Selection & Keypad State (Option 1)
   const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null);
@@ -109,7 +114,11 @@ export default function LoginPage() {
   useEffect(() => {
     if (selectedRole !== "profesor") return;
     syncAllTeachers();
-    const interval = setInterval(syncAllTeachers, 1500);
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        syncAllTeachers();
+      }
+    }, 15000);
     return () => clearInterval(interval);
   }, [selectedRole, syncAllTeachers]);
 
@@ -149,8 +158,10 @@ export default function LoginPage() {
     if (!teacherLockout.isLocked || !selectedTeacher) return;
 
     const interval = setInterval(() => {
-      syncTeacherLockout();
-    }, 1500);
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        syncTeacherLockout();
+      }
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [teacherLockout.isLocked, selectedTeacher, syncTeacherLockout]);
@@ -166,10 +177,14 @@ export default function LoginPage() {
     }
 
     setIsSubmitting(true);
-    const res = await requestStudentOtp(studentEmail.trim().toLowerCase());
+    const clean = studentEmail.trim().toLowerCase();
+    const res = await requestStudentOtp(clean);
 
     if (res.success) {
-      setOtpModalEmail(studentEmail.trim().toLowerCase());
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("df_pending_otp_email", clean);
+      }
+      setOtpModalEmail(clean);
     } else {
       setErrorMsg(res.error || "No se pudo solicitar el código OTP. Comprueba que el correo sea correcto.");
     }
@@ -287,12 +302,18 @@ export default function LoginPage() {
           return await verifyStudentWithOtp(otpModalEmail, code);
         }}
         onSuccess={() => {
+          if (typeof window !== "undefined") {
+            sessionStorage.removeItem("df_pending_otp_email");
+          }
           registerSuccessfulLogin("alumno", otpModalEmail);
           if (typeof window !== "undefined") {
             window.location.href = "/";
           }
         }}
         onCancel={() => {
+          if (typeof window !== "undefined") {
+            sessionStorage.removeItem("df_pending_otp_email");
+          }
           setOtpModalEmail(null);
           setIsSubmitting(false);
         }}

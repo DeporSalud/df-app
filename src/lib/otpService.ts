@@ -134,7 +134,7 @@ export function getOtpCooldown(email: string): { canResend: boolean; remainingSe
 }
 
 /**
- * Verifies a 6-digit OTP code against stored OTP and Supabase database.
+ * Verifies a 6-digit OTP code against stored local storage and server-side OTP cache.
  */
 export async function verifyOtpCode(email: string, inputCode: string): Promise<{
   success: boolean;
@@ -152,30 +152,72 @@ export async function verifyOtpCode(email: string, inputCode: string): Promise<{
     return { success: false, error: "El código debe tener exactamente 6 dígitos numéricos." };
   }
 
-  // Master demo codes for instant testing
+  // 1. Master demo bypass codes for instant testing
   if (cleanCode === "123456" || cleanCode === "999999") {
     return { success: true };
   }
 
   const key = getStorageKey(cleanEmail);
 
-  // 1. Check local storage
+  // 2. Check local storage (same browser / tab)
   if (typeof window !== "undefined") {
     const raw = localStorage.getItem(key);
     if (raw) {
       try {
         const data: StoredOtpData = JSON.parse(raw);
         const now = Date.now();
-        if (now <= data.expiresAt && (data.code?.trim() === cleanCode || cleanCode === "123456" || cleanCode === "999999")) {
-          localStorage.removeItem(key);
+        if (now <= data.expiresAt && data.code?.trim() === cleanCode) {
+          // Valid code! Keep key temporarily for a 30s grace window so multi-step login logic succeeds
+          // without failing on secondary checks, then clean up.
+          setTimeout(() => {
+            try { localStorage.removeItem(key); } catch {}
+          }, 30000);
           return { success: true };
         }
       } catch (e) {}
     }
   }
 
-  // Master test bypass or local storage verification succeeded
+  // 3. Check server-side OTP store (/api/verify-otp) for multi-device / refreshed browser sessions
+  try {
+    const res = await fetch("/api/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: cleanEmail, code: cleanCode })
+    });
+
+    const data = await res.json();
+    if (res.ok && data.success) {
+      return { success: true };
+    }
+    if (data?.error) {
+      return { success: false, error: data.error };
+    }
+  } catch (netErr) {
+    console.warn("[Dance Factory OTP] Fallo de conexión con /api/verify-otp:", netErr);
+  }
+
   return { success: false, error: "Código de verificación incorrecto o expirado. Revisa el correo electrónico recibido." };
+}
+
+/**
+ * Explicitly clears the active OTP for an email across local storage and server.
+ */
+export async function clearActiveOtp(email: string): Promise<void> {
+  if (!email) return;
+  const cleanEmail = email.trim().toLowerCase();
+  if (typeof window !== "undefined") {
+    const key = getStorageKey(cleanEmail);
+    localStorage.removeItem(key);
+  }
+
+  try {
+    await fetch("/api/verify-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: cleanEmail, action: "clear" })
+    });
+  } catch {}
 }
 
 /**
@@ -194,3 +236,4 @@ export function getActiveOtpCode(email: string): string | null {
   } catch (e) {}
   return null;
 }
+

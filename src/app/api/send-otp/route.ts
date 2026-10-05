@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendOtpEmail } from "@/lib/mailer";
+import { storeServerOtp } from "@/lib/serverOtpStore";
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wjnoawmefdurqqjwqdmi.supabase.co";
@@ -28,7 +29,10 @@ export async function POST(req: NextRequest) {
     const cleanEmail = email.trim().toLowerCase();
     const cleanCode = code.trim();
 
-    // Send email using Hostinger SMTP (do NOT overwrite student's permanent nfc_token)
+    // 1. Guardar código en el almacén de seguridad del servidor
+    storeServerOtp(cleanEmail, cleanCode);
+
+    // 2. Enviar correo usando Hostinger SMTP oficial
     const result = await sendOtpEmail({
       email: cleanEmail,
       code: cleanCode,

@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { supabase } from "@/lib/supabase/client";
-import { generateAndSendOtp, verifyOtpCode } from "@/lib/otpService";
+import { generateAndSendOtp, verifyOtpCode, clearActiveOtp } from "@/lib/otpService";
 import { isRegularClassStudent, hasPaidSeasonMatricula } from "@/lib/matriculaService";
 
 export interface Student {
@@ -167,6 +167,22 @@ export function StudentProvider({ children }: { children: ReactNode }) {
   });
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
+  const loadFallbackStudents = () => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem("df_alumnos_cache");
+        if (cached) {
+          const list = JSON.parse(cached);
+          if (Array.isArray(list) && list.length > 0) {
+            setStudents(list);
+            return;
+          }
+        }
+      } catch {}
+    }
+    setStudents(INITIAL_STUDENTS);
+  };
+
   const fetchStudents = async () => {
     try {
       const { data, error } = await supabase
@@ -203,6 +219,9 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         });
 
         setStudents(enriched);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("df_alumnos_cache", JSON.stringify(enriched));
+        }
         
         const savedRole = typeof window !== "undefined" ? localStorage.getItem("df_auth_role") as UserRole : null;
         if (savedRole) {
@@ -219,10 +238,13 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         if (savedTeacherId) {
           setCurrentTeacherIdState(savedTeacherId);
         }
+      } else if (error) {
+        console.warn("Supabase fetch returned error, using cached or fallback students:", error);
+        loadFallbackStudents();
       }
     } catch (err) {
       console.warn("Supabase fetch failed, using fallback students list:", err);
-      setStudents(INITIAL_STUDENTS);
+      loadFallbackStudents();
     } finally {
       setIsLoading(false);
     }
@@ -384,40 +406,51 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       const verification = await verifyOtpCode(cleanEmail, code);
 
       if (!verification.success) {
-        return { success: false, error: verification.error || "Código de verificación incorrecto." };
+        return { success: false, error: verification.error || "Código de verificación incorrecto o expirado." };
       }
 
-      // Activate student in Supabase WITHOUT overwriting permanent nfc_token
-      const { data: updatedList } = await supabase
-        .from("alumnos")
-        .update({ estado: "Activo" })
-        .ilike("email", cleanEmail)
-        .select();
+      // Limpiar OTP tanto en local como en servidor
+      await clearActiveOtp(cleanEmail);
 
-      let targetStudent = updatedList && updatedList.length > 0 ? updatedList[0] : null;
+      let targetStudent: Student | null = null;
 
-      if (!targetStudent) {
-        // Find existing student by email
-        const { data: foundList } = await supabase
+      // 1. Intentar actualizar / consultar en Supabase si está disponible
+      try {
+        const { data: updatedList } = await supabase
           .from("alumnos")
-          .select("*")
-          .ilike("email", cleanEmail);
-        if (foundList && foundList.length > 0) {
-          targetStudent = foundList[0];
+          .update({ estado: "Activo" })
+          .ilike("email", cleanEmail)
+          .select();
+
+        if (updatedList && updatedList.length > 0) {
+          targetStudent = updatedList[0];
+        } else {
+          const { data: foundList } = await supabase
+            .from("alumnos")
+            .select("*")
+            .ilike("email", cleanEmail);
+          if (foundList && foundList.length > 0) {
+            targetStudent = foundList[0];
+          }
         }
+      } catch (dbErr) {
+        console.warn("[StudentContext] Aviso al conectar con base de datos:", dbErr);
       }
 
       if (targetStudent) {
-        // If student does not have an nfc_token yet, generate a 4-digit token
+        // Asignar carnet de acceso NFC digital de 4 dígitos si no lo tiene
         if (!targetStudent.nfc_token) {
           const generatedCard = Math.floor(1000 + Math.random() * 9000).toString();
-          await supabase.from("alumnos").update({ nfc_token: generatedCard }).eq("id", targetStudent.id);
+          try {
+            await supabase.from("alumnos").update({ nfc_token: generatedCard }).eq("id", targetStudent.id);
+          } catch {}
           targetStudent.nfc_token = generatedCard;
         }
 
         if (typeof window !== "undefined") {
           localStorage.setItem("df_auth_role", "alumno");
           localStorage.setItem("df_student_session_id", targetStudent.id);
+          localStorage.setItem("df_current_student_data", JSON.stringify(targetStudent));
         }
         setUserRoleState("alumno");
         setCurrentStudentIdState(targetStudent.id);
@@ -426,24 +459,51 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         return { success: true };
       }
 
-      // Demo or local fallback match
-      const demoMatch = students.find(s => s.email?.toLowerCase() === cleanEmail);
-      if (demoMatch) {
+      // 2. Comprobar en caché local de alumnos (si Supabase los había cargado antes)
+      let cachedMatch: Student | null = null;
+      if (typeof window !== "undefined") {
+        try {
+          const cachedRaw = localStorage.getItem("df_alumnos_cache");
+          if (cachedRaw) {
+            const list: Student[] = JSON.parse(cachedRaw);
+            cachedMatch = list.find(s => s.email?.toLowerCase() === cleanEmail) || null;
+          }
+        } catch {}
+      }
+
+      const match = cachedMatch || students.find(s => s.email?.toLowerCase() === cleanEmail);
+      if (match) {
         if (typeof window !== "undefined") {
           localStorage.setItem("df_auth_role", "alumno");
-          localStorage.setItem("df_student_session_id", demoMatch.id);
+          localStorage.setItem("df_student_session_id", match.id);
+          localStorage.setItem("df_current_student_data", JSON.stringify(match));
         }
         setUserRoleState("alumno");
-        setCurrentStudentIdState(demoMatch.id);
+        setCurrentStudentIdState(match.id);
         setIsAuthenticated(true);
         return { success: true };
       }
 
-      // Dynamic fallback creation
+      // 3. Creación dinámica de sesión para alumnos nuevos o si Supabase está restringido por cuota
       const fallbackId = `df_${Date.now()}`;
+      const fallbackStudent: Student = {
+        id: fallbackId,
+        nombre_completo: cleanEmail.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, l => l.toUpperCase()),
+        email: cleanEmail,
+        telefono: "",
+        nfc_token: Math.floor(1000 + Math.random() * 9000).toString(),
+        plan_activo: "Sin Plan Activo",
+        clases_restantes: 0,
+        estado: "Activo",
+        sede: "tejar"
+      };
+
+      setStudents(prev => [fallbackStudent, ...prev]);
+
       if (typeof window !== "undefined") {
         localStorage.setItem("df_auth_role", "alumno");
         localStorage.setItem("df_student_session_id", fallbackId);
+        localStorage.setItem("df_current_student_data", JSON.stringify(fallbackStudent));
       }
       setUserRoleState("alumno");
       setCurrentStudentIdState(fallbackId);
@@ -471,6 +531,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem("df_student_session_id");
       localStorage.removeItem("df_teacher_session_id");
       localStorage.removeItem("df_auth_role");
+      localStorage.removeItem("df_current_student_data");
     }
   };
 
@@ -495,7 +556,12 @@ export function StudentProvider({ children }: { children: ReactNode }) {
   };
 
   const currentStudent = (isAuthenticated && currentStudentId)
-    ? (students.find(s => s.id === currentStudentId) || null)
+    ? (students.find(s => s.id === currentStudentId) || (typeof window !== "undefined" ? (() => {
+        try {
+          const cached = localStorage.getItem("df_current_student_data");
+          return cached ? JSON.parse(cached) : null;
+        } catch { return null; }
+      })() : null))
     : null;
   const currentTeacher = PROFESORES_LIST.find(t => t.id === currentTeacherId) || PROFESORES_LIST[0];
 
