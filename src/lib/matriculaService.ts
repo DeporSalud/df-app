@@ -233,11 +233,9 @@ export function isRegularClassStudent(
     if (student.assigned_classes.some(isRegularClassId)) return true;
   }
 
-  // 2. Flags booleanos directos (solo si NO tiene un plan explícito de bono u open class)
-  if (!isBonoOrOpen) {
-    if (student.es_regular === true || student.es_alumno_regular === true || student.tiene_clases_regulares === true) {
-      return true;
-    }
+  // 2. Flags booleanos directos de alumno regular (tienen precedencia absoluta)
+  if (student.es_regular === true || student.es_alumno_regular === true || student.tiene_clases_regulares === true) {
+    return true;
   }
 
   // 3. Inspección de plan_activo: debe ser un plan de clases regulares

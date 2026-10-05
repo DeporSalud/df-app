@@ -13,11 +13,23 @@ const inMemoryOtpStore = new Map<string, ServerStoredOtp>();
 
 const OTP_BACKUP_PATH = "/tmp/df_server_otps.json";
 
+function purgeExpired(data: Record<string, ServerStoredOtp>): Record<string, ServerStoredOtp> {
+  const now = Date.now();
+  const cleaned: Record<string, ServerStoredOtp> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (v && v.expiresAt > now) {
+      cleaned[k] = v;
+    }
+  }
+  return cleaned;
+}
+
 function loadFromDisk(): Record<string, ServerStoredOtp> {
   try {
     if (fs.existsSync(OTP_BACKUP_PATH)) {
       const raw = fs.readFileSync(OTP_BACKUP_PATH, "utf8");
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      return purgeExpired(parsed);
     }
   } catch (e) {
     console.warn("[serverOtpStore] Error reading disk backup:", e);
@@ -27,7 +39,8 @@ function loadFromDisk(): Record<string, ServerStoredOtp> {
 
 function saveToDisk(data: Record<string, ServerStoredOtp>) {
   try {
-    fs.writeFileSync(OTP_BACKUP_PATH, JSON.stringify(data), "utf8");
+    const cleaned = purgeExpired(data);
+    fs.writeFileSync(OTP_BACKUP_PATH, JSON.stringify(cleaned), "utf8");
   } catch (e) {
     console.warn("[serverOtpStore] Error saving disk backup:", e);
   }

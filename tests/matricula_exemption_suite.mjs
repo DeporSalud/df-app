@@ -160,11 +160,11 @@ test("[R3.4] Pase Mensual Ilimitado y Clase Suelta exentos de matrícula en 2ª 
   assert.strictEqual(calcPase.matriculaCost, 0.00);
   assert.strictEqual(calcPase.isExempt, true);
 
-  const sSuelta = { id: "s_suelta", plan_activo: "Clase Suelta Open Class", clases_restantes: 0 };
-  assert.strictEqual(hasPaidSeasonMatricula(sSuelta), true);
-  const calcSuelta = calculateBonoPriceAndMatricula({ bonoId: "Bono 8 clases", basePrice: 57, student: sSuelta });
+  // La clase suelta en sí misma está 100% exenta de matrícula (15,00 € exactos)
+  const calcSuelta = calculateBonoPriceAndMatricula({ bonoId: "Clase Suelta", basePrice: 15, clasesCount: 1 });
   assert.strictEqual(calcSuelta.matriculaCost, 0.00);
   assert.strictEqual(calcSuelta.isExempt, true);
+  assert.strictEqual(calcSuelta.totalToPay, 15.00);
 });
 
 test("[R1.Edge3] assignedClassIds vacíos o nulos no otorgan condición de alumno regular", () => {

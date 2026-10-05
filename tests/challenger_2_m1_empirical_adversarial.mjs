@@ -490,9 +490,9 @@ test("[ROLLCALL.3] Static file inspection of TeacherPortalView.tsx confirms sche
 
   // Verify that insert payload contains alumno_id, clase_id, fecha_hora
   assert.ok(fileContent.includes('"asistencias"'), "Must reference asistencias table");
-  assert.ok(fileContent.includes("alumno_id: studentId"), "Must have alumno_id");
-  assert.ok(fileContent.includes("clase_id: selectedClase.id"), "Must have clase_id");
-  assert.ok(fileContent.includes("fecha_hora: new Date().toISOString()"), "Must have fecha_hora");
+  assert.ok(fileContent.includes("alumno_id: student.id") || fileContent.includes("alumno_id: studentId"), "Must have alumno_id");
+  assert.ok(fileContent.includes("clase_id: selectedClassUUID") || fileContent.includes("clase_id: selectedClase.id"), "Must have clase_id");
+  assert.ok(fileContent.includes("fecha_hora: attendanceISO") || fileContent.includes("fecha_hora: new Date().toISOString()"), "Must have fecha_hora");
 
   // Verify obsolete columns are completely removed
   assert.equal(fileContent.includes("tipo_acceso:"), false, "TeacherPortalView.tsx must NOT insert tipo_acceso");

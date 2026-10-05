@@ -263,8 +263,12 @@ export function StudentProvider({ children }: { children: ReactNode }) {
     }
     fetchStudents();
 
+    let lastRefetch = Date.now();
     const handleVisibilityOrFocus = () => {
+      const now = Date.now();
+      if (now - lastRefetch < 60000) return; // Máximo 1 refetch por minuto para no saturar Supabase
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        lastRefetch = now;
         fetchStudents();
       }
     };
