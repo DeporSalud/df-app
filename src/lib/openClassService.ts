@@ -442,6 +442,19 @@ export function crearReservaOpenClass(data: {
   }
 
   const maxCapacity = data.clase.aforo_maximo || 20;
+
+  // Validación de aforo mínimo (4 personas) y corte de 5 horas previas
+  const sessionStatus = getOpenClassSessionStatus(
+    classUUID,
+    cleanISO,
+    data.clase.hora_inicio,
+    maxCapacity
+  );
+
+  if (!sessionStatus.puedeReservar) {
+    throw new Error(sessionStatus.motivoBloqueo || "No es posible reservar esta clase (suspendida o aforo completo).");
+  }
+
   if (isSesionCompleta(data.clase, cleanISO, maxCapacity)) {
     throw new Error(`Aforo completo para la clase ${data.clase.nombre_clase} en fecha ${cleanISO}`);
   }
@@ -499,6 +512,152 @@ export function getHorasRestantesParaSesion(fechaISO?: string, horaInicio?: stri
   const sessionDate = new Date(year, month - 1, day, isNaN(h) ? 19 : h, isNaN(m) ? 0 : m, 0, 0);
   const now = new Date();
   return (sessionDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+}
+
+export const OPEN_CLASS_MIN_STUDENTS = 4;
+export const OPEN_CLASS_CUTOFF_HOURS = 5;
+
+export interface OpenClassSessionStatus {
+  status: "abierta" | "confirmada" | "suspendida_aforo_minimo" | "finalizada";
+  horasRestantes: number;
+  reservasCount: number;
+  minimoRequerido: number;
+  puedeReservar: boolean;
+  motivoBloqueo?: string;
+  badgeText: string;
+  badgeColor: string;
+}
+
+/**
+ * Regla de negocio oficial de Dance Factory:
+ * Si quedan menos de 5 horas para la clase y hay menos de 4 personas apuntadas,
+ * la sesión queda suspendida por aforo mínimo y se bloquean nuevas reservas.
+ */
+export function getOpenClassSessionStatus(
+  claseId: string,
+  fechaISO: string,
+  horaInicio: string,
+  aforoMaximo: number = 20
+): OpenClassSessionStatus {
+  const horasRestantes = getHorasRestantesParaSesion(fechaISO, horaInicio);
+  const reservasCount = getSesionReservasCount(claseId, fechaISO);
+  const isFull = reservasCount >= aforoMaximo;
+
+  if (horasRestantes <= 0) {
+    return {
+      status: "finalizada",
+      horasRestantes,
+      reservasCount,
+      minimoRequerido: OPEN_CLASS_MIN_STUDENTS,
+      puedeReservar: false,
+      motivoBloqueo: "La sesión ya ha comenzado o finalizado.",
+      badgeText: "Finalizada",
+      badgeColor: "bg-slate-800 text-slate-400 border border-slate-700"
+    };
+  }
+
+  // REGLA DE LAS 5 HORAS PREVIAS (CORTE DE AFORO MÍNIMO)
+  if (horasRestantes < OPEN_CLASS_CUTOFF_HOURS) {
+    if (reservasCount < OPEN_CLASS_MIN_STUDENTS) {
+      return {
+        status: "suspendida_aforo_minimo",
+        horasRestantes,
+        reservasCount,
+        minimoRequerido: OPEN_CLASS_MIN_STUDENTS,
+        puedeReservar: false,
+        motivoBloqueo: `Clase suspendida: No se alcanzó el mínimo de ${OPEN_CLASS_MIN_STUDENTS} personas a las ${OPEN_CLASS_CUTOFF_HOURS} horas previas de la sesión. Saldo de clase reembolsado.`,
+        badgeText: `⚠️ Suspendida (mín. ${OPEN_CLASS_MIN_STUDENTS} pers.)`,
+        badgeColor: "bg-red-500/20 text-red-300 border border-red-500/40"
+      };
+    } else {
+      return {
+        status: "confirmada",
+        horasRestantes,
+        reservasCount,
+        minimoRequerido: OPEN_CLASS_MIN_STUDENTS,
+        puedeReservar: !isFull,
+        motivoBloqueo: isFull ? "Aforo completo" : undefined,
+        badgeText: isFull ? "Aforo Completo" : "✓ Confirmada",
+        badgeColor: isFull 
+          ? "bg-red-500/20 text-red-300 border border-red-500/30" 
+          : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+      };
+    }
+  }
+
+  // Faltan 5 horas o más
+  const hasMin = reservasCount >= OPEN_CLASS_MIN_STUDENTS;
+  return {
+    status: hasMin ? "confirmada" : "abierta",
+    horasRestantes,
+    reservasCount,
+    minimoRequerido: OPEN_CLASS_MIN_STUDENTS,
+    puedeReservar: !isFull,
+    motivoBloqueo: isFull ? "Aforo completo" : undefined,
+    badgeText: hasMin
+      ? `✓ Confirmada (${reservasCount}/${aforoMaximo})`
+      : `${reservasCount}/${OPEN_CLASS_MIN_STUDENTS} mín. (corte 5h)`,
+    badgeColor: hasMin
+      ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+      : "bg-amber-500/15 text-amber-300 border border-amber-500/30"
+  };
+}
+
+/**
+ * Detecta sesiones dentro de las 5 horas previas con menos de 4 alumnos,
+ * cancela la sesión y reembolsa automáticamente 1 clase al bono del alumno en Supabase.
+ */
+export async function verificarYSuspenderSesionesBajoAforo(): Promise<{ canceladasCount: number; alumnosReembolsados: string[] }> {
+  if (typeof window === "undefined") return { canceladasCount: 0, alumnosReembolsados: [] };
+  
+  const current = getOpenClassReservas();
+  let updated = false;
+  const reembolsados: string[] = [];
+
+  const sessionsMap: Record<string, OpenClassReserva[]> = {};
+  current.forEach(r => {
+    if (r.estado === "Confirmada") {
+      const key = `${normalizeClaseId(r.clase_id)}_${cleanDateISO(r.fecha_iso)}`;
+      if (!sessionsMap[key]) sessionsMap[key] = [];
+      sessionsMap[key].push(r);
+    }
+  });
+
+  for (const [, reservas] of Object.entries(sessionsMap)) {
+    if (reservas.length > 0 && reservas.length < OPEN_CLASS_MIN_STUDENTS) {
+      const sample = reservas[0];
+      const horasRestantes = getHorasRestantesParaSesion(sample.fecha_iso, sample.hora_inicio);
+      
+      // Si quedan menos de 5h y la clase es hoy/futura reciente
+      if (horasRestantes < OPEN_CLASS_CUTOFF_HOURS && horasRestantes > -24) {
+        for (const r of reservas) {
+          r.estado = "Cancelada";
+          r.asistido = false;
+          updated = true;
+          reembolsados.push(r.alumno_nombre || r.alumno_id);
+
+          // Reembolsar 1 clase en Supabase si tiene saldo de bono
+          try {
+            const { data: st } = await supabase.from("alumnos").select("id, clases_restantes, plan_activo").eq("id", r.alumno_id).maybeSingle();
+            if (st && typeof st.clases_restantes === "number") {
+              await supabase.from("alumnos").update({
+                clases_restantes: st.clases_restantes + 1
+              }).eq("id", st.id);
+            }
+          } catch (e) {
+            console.error("Error reembolsando saldo a alumno por aforo mínimo:", e);
+          }
+        }
+      }
+    }
+  }
+
+  if (updated) {
+    saveOpenClassReservas(current);
+    window.dispatchEvent(new Event("df_reservas_updated"));
+  }
+
+  return { canceladasCount: reembolsados.length, alumnosReembolsados: reembolsados };
 }
 
 /**
@@ -760,7 +919,8 @@ export async function syncReservasFromSupabase(): Promise<OpenClassReserva[]> {
     }
 
     saveOpenClassReservas(merged);
-    return merged;
+    await verificarYSuspenderSesionesBajoAforo();
+    return getOpenClassReservas();
   } catch (err) {
     console.error("Error in syncReservasFromSupabase:", err);
     return getOpenClassReservas();

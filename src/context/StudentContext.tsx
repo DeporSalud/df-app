@@ -455,6 +455,19 @@ export function StudentProvider({ children }: { children: ReactNode }) {
             .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail}`);
           if (foundList && foundList.length > 0) {
             targetStudent = foundList[0];
+          } else {
+            // Buscar por nombre o usuario de correo (ej. Olivia, Anna, etc.)
+            const username = cleanEmail.split("@")[0].replace(/[._-]/g, " ").trim();
+            if (username.length >= 3) {
+              const { data: nameMatches } = await supabase
+                .from("alumnos")
+                .select("*")
+                .ilike("nombre_completo", `%${username}%`)
+                .limit(1);
+              if (nameMatches && nameMatches.length > 0) {
+                targetStudent = nameMatches[0];
+              }
+            }
           }
         }
       } catch (dbErr) {
@@ -512,14 +525,40 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         return { success: true };
       }
 
-      // 3. Creación dinámica de sesión para alumnos nuevos o si Supabase está restringido por cuota
-      const fallbackId = `df_${Date.now()}`;
+      // 3. Creación dinámica de sesión para alumnos nuevos: sincronizar inmediatamente a Supabase
+      const generatedToken = Math.floor(1000 + Math.random() * 9000).toString();
+      let fallbackId = `df_${Date.now()}`;
+      const defaultName = cleanEmail.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, l => l.toUpperCase());
+
+      try {
+        const { data: insertedStudent } = await supabase
+          .from("alumnos")
+          .insert([{
+            nombre_completo: defaultName,
+            email: cleanEmail,
+            telefono: "",
+            nfc_token: generatedToken,
+            plan_activo: "Sin Plan Activo",
+            clases_restantes: 0,
+            estado: "Activo",
+            sede: "tejar"
+          }])
+          .select()
+          .maybeSingle();
+
+        if (insertedStudent && insertedStudent.id) {
+          fallbackId = insertedStudent.id;
+        }
+      } catch (insertErr) {
+        console.warn("No se pudo insertar en Supabase, usando fallback local:", insertErr);
+      }
+
       const fallbackStudent: Student = {
         id: fallbackId,
-        nombre_completo: cleanEmail.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, l => l.toUpperCase()),
+        nombre_completo: defaultName,
         email: cleanEmail,
         telefono: "",
-        nfc_token: Math.floor(1000 + Math.random() * 9000).toString(),
+        nfc_token: generatedToken,
         plan_activo: "Sin Plan Activo",
         clases_restantes: 0,
         estado: "Activo",

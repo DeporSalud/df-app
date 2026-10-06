@@ -49,7 +49,8 @@ import {
   isSesionCompleta,
   normalizeClaseId,
   DEFAULT_STUDIO2_OPEN_CLASSES,
-  syncReservasFromSupabase
+  syncReservasFromSupabase,
+  getOpenClassSessionStatus
 } from "@/lib/openClassService";
 import { 
   calculateBonoPriceAndMatricula, 
@@ -319,6 +320,24 @@ function ClasesContent() {
         message: "Las clases de Formación Rotativa no se pueden reservar desde la app.\n\nPara consultar disponibilidad o reservar tu plaza, dirígete a recepción de la escuela o contacta por WhatsApp.",
         type: "info",
         confirmText: "Entendido"
+      });
+      return;
+    }
+
+    // Check minimum attendance (4 students) & 5-hour cutoff rule
+    const sessionStatus = getOpenClassSessionStatus(
+      clase.id,
+      selectedCalendarDay.dateISO,
+      clase.hora_inicio,
+      clase.aforo_maximo || 20
+    );
+
+    if (!sessionStatus.puedeReservar) {
+      setModal({
+        isOpen: true,
+        title: sessionStatus.status === "suspendida_aforo_minimo" ? "⚠️ Clase Suspendida" : "Plazas No Disponibles",
+        message: sessionStatus.motivoBloqueo || "No es posible reservar esta clase.",
+        type: "warning"
       });
       return;
     }
@@ -1158,6 +1177,13 @@ function ClasesContent() {
                     (clase.tipo_clase || "").toUpperCase().includes("ROTAT");
                   const isFormacion = clase.nombre_clase?.toUpperCase().includes("FORMACI");
 
+                  const sessionStatus = getOpenClassSessionStatus(
+                    clase.id,
+                    selectedCalendarDay.dateISO,
+                    clase.hora_inicio,
+                    clase.aforo_maximo || 20
+                  );
+
                   return (
                     <div 
                       key={clase.id} 
@@ -1166,6 +1192,8 @@ function ClasesContent() {
                           ? "bg-gradient-to-r from-emerald-500/15 via-[var(--color-bg-card)] to-[var(--color-bg-card)] border-emerald-500/60" 
                           : isRotativa
                           ? "bg-gradient-to-r from-purple-950/30 via-[var(--color-bg-card)] to-[var(--color-bg-card)] border-purple-500/40"
+                          : sessionStatus.status === "suspendida_aforo_minimo"
+                          ? "bg-gradient-to-r from-rose-950/20 via-[var(--color-bg-card)] to-[var(--color-bg-card)] border-rose-500/30 opacity-90"
                           : isFormacion
                           ? "bg-gradient-to-r from-purple-500/10 to-[var(--color-bg-card)] border-purple-500/30"
                           : "bg-[var(--color-bg-card)] border-[var(--color-border)] hover:border-amber-400/50"
@@ -1187,6 +1215,10 @@ function ClasesContent() {
                             )}
                             <span className="text-[10px] font-mono font-bold text-slate-300 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">
                               📅 {selectedCalendarDay.dayShort} {selectedCalendarDay.dayNumber} {selectedCalendarDay.monthShort}
+                            </span>
+                            {/* Badge oficial de aforo mínimo y corte 5 horas */}
+                            <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${sessionStatus.badgeColor}`}>
+                              {sessionStatus.badgeText}
                             </span>
                           </div>
 
@@ -1223,6 +1255,16 @@ function ClasesContent() {
                           <span className="text-xs font-bold text-emerald-400 bg-emerald-500/15 px-3.5 py-1.5 rounded-xl border border-emerald-500/30 flex items-center gap-1.5">
                             <CheckCircle2 size={15} />
                             <span>Plaza Reservada</span>
+                          </span>
+                        ) : sessionStatus.status === "suspendida_aforo_minimo" ? (
+                          <span className="text-xs font-bold text-rose-400 bg-rose-500/15 px-3.5 py-1.5 rounded-xl border border-rose-500/30 flex items-center gap-1.5 shadow-sm" title={sessionStatus.motivoBloqueo}>
+                            <AlertCircle size={15} className="shrink-0" />
+                            <span>Suspendida por aforo mín. (&lt; 4 alumnos a las 5h)</span>
+                          </span>
+                        ) : sessionStatus.status === "finalizada" ? (
+                          <span className="text-xs font-bold text-slate-400 bg-slate-800/60 px-3.5 py-1.5 rounded-xl border border-slate-700 flex items-center gap-1.5">
+                            <Clock size={15} />
+                            <span>Sesión Finalizada</span>
                           </span>
                         ) : isFull ? (
                           <span className="text-xs font-bold text-rose-400 bg-rose-500/15 px-3.5 py-1.5 rounded-xl border border-rose-500/30 flex items-center gap-1.5">
