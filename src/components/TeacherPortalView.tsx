@@ -55,6 +55,29 @@ const isStudio1 = (sede?: string | null): boolean => {
   return s === "tejar" || s === "mostoles" || s === "studio" || s === "studio 1";
 };
 
+const TEACHER_DB_ID_MAP: Record<string, string> = {
+  "LUCIA MUNOZ": "c57fb3d0-525f-474a-8de7-d6d504b540be",
+  "LUCÍA MUÑOZ": "c57fb3d0-525f-474a-8de7-d6d504b540be",
+  "1001": "c57fb3d0-525f-474a-8de7-d6d504b540be",
+  "PAULA JIMENEZ": "32d7139b-b2a2-4084-9322-d86cda358df7",
+  "PAULA JIMÉNEZ": "32d7139b-b2a2-4084-9322-d86cda358df7",
+  "1006": "32d7139b-b2a2-4084-9322-d86cda358df7",
+  "MARTA GARCIA": "e9cc4200-aba2-4e67-8191-808c40e75621",
+  "MARTA GARCÍA": "e9cc4200-aba2-4e67-8191-808c40e75621",
+  "MARTA GARCIA VAZQUEZ": "e9cc4200-aba2-4e67-8191-808c40e75621",
+  "MARTA GARCÍA VÁZQUEZ": "e9cc4200-aba2-4e67-8191-808c40e75621",
+  "1014": "e9cc4200-aba2-4e67-8191-808c40e75621",
+  "EVA LEIVA": "80c59814-1ab4-4793-9039-e8fe1c5ef681",
+  "1004": "80c59814-1ab4-4793-9039-e8fe1c5ef681",
+  "MARIO GADEA": "145547d1-643c-40aa-9144-305893e8f64c",
+  "1012": "145547d1-643c-40aa-9144-305893e8f64c",
+  "LUCIA ZAMORANO": "2d95e851-b927-494b-9558-d7ed6d447a20",
+  "LUCÍA ZAMORANO": "2d95e851-b927-494b-9558-d7ed6d447a20",
+  "1002": "2d95e851-b927-494b-9558-d7ed6d447a20",
+  "ALEJANDRO ROVINA": "00000000-0000-0000-0000-000000001010",
+  "1010": "00000000-0000-0000-0000-000000001010"
+};
+
 const isRegularMembership = (plan?: string | null, remaining?: number | null): boolean => {
   if (remaining === null) return true;
   const p = (plan || "").toLowerCase();
@@ -182,15 +205,25 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       // Find teacher in alumnos table or create fallback
       const { data: studentList } = await supabase.from("alumnos").select("*");
       const normName = normalizeText(teacherName);
+      const explicitUUID = TEACHER_DB_ID_MAP[normName.toUpperCase()] || (currentTeacher?.id ? TEACHER_DB_ID_MAP[currentTeacher.id] : undefined);
+
       let tStudent = (studentList || []).find(s => {
-        if (s.id === "e9cc4200-aba2-4e67-8191-808c40e75621" && (currentTeacher?.id === "1014" || teacherName.includes("MARTA"))) return true;
+        if (explicitUUID && s.id === explicitUUID) return true;
+        if (normName.includes("marta") && (s.id === "e9cc4200-aba2-4e67-8191-808c40e75621" || normalizeText(s.nombre_completo).includes("marta garcia"))) return true;
+        if (normName.includes("lucia") && normName.includes("munoz") && s.id === "c57fb3d0-525f-474a-8de7-d6d504b540be") return true;
+        if (normName.includes("paula") && normName.includes("jimenez") && s.id === "32d7139b-b2a2-4084-9322-d86cda358df7") return true;
         if (s.email && currentTeacher?.email && s.email.toLowerCase() === currentTeacher.email.toLowerCase()) return true;
         return normalizeText(s.nombre_completo).includes(normName);
       });
 
+      if (!tStudent && explicitUUID) {
+        const { data: singleProf } = await supabase.from("alumnos").select("*").eq("id", explicitUUID).maybeSingle();
+        if (singleProf) tStudent = singleProf;
+      }
+
       if (!tStudent) {
         tStudent = {
-          id: "docente_" + (currentTeacher?.id || "1001"),
+          id: explicitUUID || ("docente_" + (currentTeacher?.id || "1001")),
           nombre_completo: teacherName,
           email: currentTeacher?.email || "docente@dancefactory.es",
           plan_activo: "Docente Dance Factory",
@@ -758,6 +791,19 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       }
     }
 
+    // Persistencia central en Supabase alumnos_clases para recepción en tiempo real
+    const classUUID = normalizeClaseId(clase.id);
+    const sessionISO = `${selectedCalendarDay.dateISO}T${clase.hora_inicio || "19:00"}:00.000Z`;
+    try {
+      await supabase.from("alumnos_clases").insert([{
+        alumno_id: teacherStudent.id,
+        clase_id: classUUID,
+        asignado_en: sessionISO
+      }]);
+    } catch (err) {
+      console.warn("Notice: teacher enrollment in alumnos_clases:", err);
+    }
+
     // Create reservation
     crearReservaOpenClass({
       alumno_id: teacherStudent.id,
@@ -767,6 +813,10 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
     });
 
     setOpenClassReservasVersion(v => v + 1);
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("df_reservas_updated"));
+    }
 
     logActivity({
       origen: "profesor",
@@ -779,7 +829,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
     setModal({
       isOpen: true,
       title: "✓ Plaza Reservada con Éxito",
-      message: `Te has inscrito correctamente en ${clase.nombre_clase} con ${clase.profesor}.\n\n📅 Fecha: ${selectedCalendarDay.dayName} ${selectedCalendarDay.dayNumber} de ${selectedCalendarDay.monthName}\n⏰ Horario: ${clase.hora_inicio} - ${clase.hora_fin}\n🚪 Sala: ${clase.sala || "Sala Principal"}\n\nYa apareces en la lista de asistencia del docente titular para esa sesión.`,
+      message: `Te has inscrito correctamente en ${clase.nombre_clase} con ${clase.profesor}.\n\n📅 Fecha: ${selectedCalendarDay.dayName} ${selectedCalendarDay.dayNumber} de ${selectedCalendarDay.monthName}\n⏰ Horario: ${clase.hora_inicio} - ${clase.hora_fin}\n🚪 Sala: ${clase.sala || "Sala Principal"}\n\nYa apareces en la lista de asistencia del docente titular para esa sesión y en recepción.`,
       type: "success"
     });
   };
@@ -788,35 +838,54 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   const handleTeacherCancelBooking = async (clase: any) => {
     if (!teacherStudent?.id) return;
     const all = getOpenClassReservas();
+    const classUUID = normalizeClaseId(clase.id);
+    const cleanISO = cleanDateISO(selectedCalendarDay.dateISO);
+
+    // Borrar de Supabase alumnos_clases para actualizar aforo en recepción
+    try {
+      await supabase
+        .from("alumnos_clases")
+        .delete()
+        .eq("alumno_id", teacherStudent.id)
+        .eq("clase_id", classUUID)
+        .ilike("asignado_en", `${cleanISO}%`);
+    } catch (e) {
+      console.warn("Error deleting teacher enrollment from alumnos_clases:", e);
+    }
+
     const found = all.find(r => 
       r.alumno_id === teacherStudent.id && 
-      r.clase_id === clase.id && 
-      r.fecha_iso === selectedCalendarDay.dateISO && 
-      r.estado === "Confirmada"
+      normalizeClaseId(r.clase_id) === classUUID && 
+      cleanDateISO(r.fecha_iso) === cleanISO && 
+      (r.estado === "Confirmada" || r.estado === "Asistida")
     );
 
     if (found) {
       cancelarReservaOpenClass(found.id);
-
-      // Refund 1 class
-      const hasUnlimited = (teacherStudent.plan_activo || "").toLowerCase().includes("ilimitad");
-      if (!hasUnlimited && typeof teacherStudent.clases_restantes === "number") {
-        const newCount = teacherStudent.clases_restantes + 1;
-        setTeacherStudent((prev: any) => ({ ...prev, clases_restantes: newCount }));
-        try {
-          await supabase.from("alumnos").update({ clases_restantes: newCount }).eq("id", teacherStudent.id);
-        } catch (e) {}
-      }
-
-      setOpenClassReservasVersion(v => v + 1);
-
-      setModal({
-        isOpen: true,
-        title: "Reserva Cancelada",
-        message: `Has cancelado tu inscripción para ${clase.nombre_clase} el ${selectedCalendarDay.dayName} ${selectedCalendarDay.dayNumber} de ${selectedCalendarDay.monthName}. Se ha reintegrado 1 clase a tu saldo docente.`,
-        type: "info"
-      });
     }
+
+    // Refund 1 class
+    const hasUnlimited = (teacherStudent.plan_activo || "").toLowerCase().includes("ilimitad");
+    if (!hasUnlimited && typeof teacherStudent.clases_restantes === "number") {
+      const newCount = teacherStudent.clases_restantes + 1;
+      setTeacherStudent((prev: any) => ({ ...prev, clases_restantes: newCount }));
+      try {
+        await supabase.from("alumnos").update({ clases_restantes: newCount }).eq("id", teacherStudent.id);
+      } catch (e) {}
+    }
+
+    setOpenClassReservasVersion(v => v + 1);
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("df_reservas_updated"));
+    }
+
+    setModal({
+      isOpen: true,
+      title: "Reserva Cancelada",
+      message: `Has cancelado tu inscripción para ${clase.nombre_clase} el ${selectedCalendarDay.dayName} ${selectedCalendarDay.dayNumber} de ${selectedCalendarDay.monthName}. Se ha reintegrado 1 clase a tu saldo docente.`,
+      type: "info"
+    });
   };
 
   // 4. Request Bono in Standby
