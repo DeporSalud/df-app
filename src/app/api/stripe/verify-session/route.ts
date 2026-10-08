@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { createClient } from "@supabase/supabase-js";
-import { isPromoSeptiembreBono } from "@/lib/matriculaService";
+import { isPromoSeptiembreBono, getCurrentSeason } from "@/lib/matriculaService";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wjnoawmefdurqqjwqdmi.supabase.co";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "sb_publishable_dWudcdKMOeKH22g0IRKV7w_bxWNtEh2";
@@ -137,14 +137,35 @@ export async function POST(req: NextRequest) {
       const currentBalance = typeof student.clases_restantes === "number" ? student.clases_restantes : 0;
       updatedBalance = isUnlimited ? 999 : currentBalance + count;
 
-      // Update in Supabase: strictly target existing columns (plan_activo, clases_restantes)
-      const { error: updateErr } = await supabase
+      // Update in Supabase with matricula tracking and graceful fallback
+      const updatePayload: Record<string, any> = {
+        plan_activo: bonoName || "Bono de Clases",
+        clases_restantes: updatedBalance,
+      };
+
+      const chargeMatricula = isFirstBono === "true" || parseFloat(session.metadata?.matriculaCost || "0") > 0;
+      if (chargeMatricula) {
+        updatePayload.matricula_pagada = true;
+        updatePayload.matricula_fecha = new Date().toISOString();
+        updatePayload.temporada_matricula = getCurrentSeason();
+      }
+
+      let { error: updateErr } = await supabase
         .from("alumnos")
-        .update({
-          plan_activo: bonoName || "Bono de Clases",
-          clases_restantes: updatedBalance,
-        })
+        .update(updatePayload)
         .eq("id", targetStudentId);
+
+      if (updateErr && (updateErr.code === "42703" || updateErr.message?.includes("matricula"))) {
+        console.warn("[Stripe Verify] Falling back to standard columns without matricula:", updateErr.message);
+        const fallbackRes = await supabase
+          .from("alumnos")
+          .update({
+            plan_activo: bonoName || "Bono de Clases",
+            clases_restantes: updatedBalance,
+          })
+          .eq("id", targetStudentId);
+        updateErr = fallbackRes.error;
+      }
 
       if (updateErr) {
         console.error("[Stripe Verify] Error updating student in Supabase:", updateErr);

@@ -7,7 +7,7 @@ import {
   decodeMerchantParameters,
   normalizeBase64,
 } from "@/lib/redsys";
-import { isPromoSeptiembreBono } from "@/lib/matriculaService";
+import { isPromoSeptiembreBono, getCurrentSeason } from "@/lib/matriculaService";
 
 const supabaseUrl =
   process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wjnoawmefdurqqjwqdmi.supabase.co";
@@ -110,10 +110,30 @@ export async function GET(req: NextRequest) {
             if (studentToUpdate && targetUUID) {
               const curBal = typeof studentToUpdate.clases_restantes === "number" ? studentToUpdate.clases_restantes : 0;
               const newBal = clasesCount >= 999 ? 999 : curBal + clasesCount;
-              await supabase.from("alumnos").update({
+              const updatePayload: Record<string, any> = {
                 clases_restantes: newBal,
                 plan_activo: bonoName,
-              }).eq("id", targetUUID);
+              };
+
+              const chargeMatricula = metadata.isFirstBono === "true" || parseFloat(metadata.matriculaCost || "0") > 0;
+              if (chargeMatricula) {
+                updatePayload.matricula_pagada = true;
+                updatePayload.matricula_fecha = new Date().toISOString();
+                updatePayload.temporada_matricula = getCurrentSeason();
+              }
+
+              let { error: updateErr } = await supabase
+                .from("alumnos")
+                .update(updatePayload)
+                .eq("id", targetUUID);
+
+              if (updateErr && (updateErr.code === "42703" || updateErr.message?.includes("matricula"))) {
+                console.warn("[Redsys Verify] Falling back to standard columns without matricula:", updateErr.message);
+                await supabase.from("alumnos").update({
+                  clases_restantes: newBal,
+                  plan_activo: bonoName,
+                }).eq("id", targetUUID);
+              }
             }
 
             const validStudentId = isValidUUID(targetUUID) ? targetUUID : null;

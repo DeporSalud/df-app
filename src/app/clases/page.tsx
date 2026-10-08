@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { 
   QrCode, 
   Calendar, 
@@ -50,8 +50,11 @@ import {
   normalizeClaseId,
   DEFAULT_STUDIO2_OPEN_CLASSES,
   syncReservasFromSupabase,
-  getOpenClassSessionStatus
+  getOpenClassSessionStatus,
+  getHorasRestantesParaSesion,
+  verificarYSuspenderSesionesBajoAforo
 } from "@/lib/openClassService";
+import { publishSyncEvent } from "@/lib/syncEventBus";
 import { 
   calculateBonoPriceAndMatricula, 
   calculateBonoExpirationDate,
@@ -94,6 +97,14 @@ function ClasesContent() {
     clase: null,
     calendarDay: null
   });
+
+  // UI Mutex for booking submission
+  const [isBookingSubmitting, setIsBookingSubmitting] = useState(false);
+  const bookingMutexRef = useRef(false);
+
+  useEffect(() => {
+    verificarYSuspenderSesionesBajoAforo();
+  }, []);
 
   const [clases, setClases] = useState<any[]>([]);
   const [openClasses, setOpenClasses] = useState<any[]>([]);
@@ -270,17 +281,6 @@ function ClasesContent() {
   };
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith("df_matricula_paid_")) {
-          localStorage.removeItem(key);
-        }
-      }
-    }
-  }, []);
-
-  useEffect(() => {
     fetchClasesAndAssignments();
   }, [selectedSede, selectedDay, currentStudent?.id]);
 
@@ -381,63 +381,183 @@ function ClasesContent() {
     const { clase, calendarDay } = bookingConfirmationModal;
     if (!clase || !calendarDay || !currentStudent?.id) return;
 
-    // 1. Create calendar-specific reservation
-    crearReservaOpenClass({
-      alumno_id: currentStudent.id,
-      alumno_nombre: currentStudent.nombre_completo,
-      alumno_email: currentStudent.email,
-      alumno_telefono: currentStudent.telefono,
-      alumno_dni: currentStudent.dni,
-      alumno_plan: currentStudent.plan_activo,
-      clase,
-      calendarDay
-    });
+    // 1. UI Mutex Guard
+    if (bookingMutexRef.current || isBookingSubmitting) {
+      console.warn("Booking execution blocked by mutex: concurrent click detected.");
+      return;
+    }
+    bookingMutexRef.current = true;
+    setIsBookingSubmitting(true);
 
-    // 2. Deduct 1 class from bono balance (if not unlimited)
+    const classUUID = normalizeClaseId(clase.id);
+    const sessionDate = calendarDay.dateISO.trim();
+    const maxCapacity = clase.aforo_maximo || 20;
     const hasUnlimited = currentStudent.plan_activo?.toLowerCase().includes("ilimitad");
-    const remainingClasses = typeof currentStudent.clases_restantes === "number" ? currentStudent.clases_restantes : 0;
+    const currentBalance = typeof currentStudent.clases_restantes === "number" ? currentStudent.clases_restantes : 0;
 
-    if (!hasUnlimited) {
-      const updatedBalance = Math.max(0, remainingClasses - 1);
-      await supabase.from("alumnos").update({ clases_restantes: updatedBalance }).eq("id", currentStudent.id);
-      if (refetchStudents) await refetchStudents();
-    }
-
-    // 3. Register enrollment in alumnos_clases as well with exact session date
     try {
-      const classUUID = normalizeClaseId(clase.id);
-      const sessionISO = `${calendarDay.dateISO}T${clase.hora_inicio || "19:00"}:00.000Z`;
-      const { error: insertErr } = await supabase.from("alumnos_clases").insert([{
-        alumno_id: currentStudent.id,
-        clase_id: classUUID,
-        asignado_en: sessionISO
-      }]);
-      if (insertErr) {
-        console.warn("Notice: Session might already be registered in alumnos_clases:", insertErr);
+      // 2. Pre-check: Bono Balance
+      if (!hasUnlimited && currentBalance <= 0) {
+        throw new Error(`No dispones de clases restantes en tu bono (${currentBalance}). Adquiere un nuevo bono para reservar.`);
       }
-    } catch (e) {
-      // Ignored
+
+      // 3. Pre-check: Strict 5-Hour Cutoff Real-Time Re-validation
+      const sessionStatus = getOpenClassSessionStatus(
+        classUUID,
+        sessionDate,
+        clase.hora_inicio,
+        maxCapacity
+      );
+      if (!sessionStatus.puedeReservar) {
+        throw new Error(sessionStatus.motivoBloqueo || "Plazo de reserva cerrado para esta sesión.");
+      }
+
+      const hoursRemaining = getHorasRestantesParaSesion(sessionDate, clase.hora_inicio);
+      if (hoursRemaining < 5.0) {
+        throw new Error("Plazo de reserva cerrado para esta sesión: las reservas cierran estrictamente 5 horas antes.");
+      }
+
+      // 4. Pre-check: Idempotency Check (Prevent duplicate booking by same student for same date)
+      const { data: existingBooking } = await supabase
+        .from("alumnos_clases")
+        .select("id")
+        .eq("alumno_id", currentStudent.id)
+        .eq("clase_id", classUUID)
+        .gte("asignado_en", `${sessionDate}T00:00:00`)
+        .lte("asignado_en", `${sessionDate}T23:59:59`)
+        .maybeSingle();
+
+      if (existingBooking) {
+        setBookingConfirmationModal({ isOpen: false, clase: null, calendarDay: null });
+        setModal({
+          isOpen: true,
+          title: "ℹ️ Reserva Ya Registrada",
+          message: "Ya tienes una plaza reservada y confirmada para esta misma sesión.",
+          type: "info"
+        });
+        return;
+      }
+
+      // 5. Pre-check: Real-Time Supabase Capacity Check & Snapshot Prior Bookings
+      const { data: priorBookings, error: countErr } = await supabase
+        .from("alumnos_clases")
+        .select("id")
+        .eq("clase_id", classUUID)
+        .gte("asignado_en", `${sessionDate}T00:00:00`)
+        .lte("asignado_en", `${sessionDate}T23:59:59`);
+
+      const priorCount = priorBookings ? priorBookings.length : 0;
+      if (!countErr && priorCount >= maxCapacity) {
+        throw new Error(`Aforo completo (${priorCount}/${maxCapacity} plazas ocupadas). Ya no quedan plazas libres para esta sesión.`);
+      }
+
+      const priorIdSet = new Set((priorBookings || []).map(b => b.id));
+      const availableSlots = maxCapacity - priorCount;
+
+      // 6. Transaction Inversion Step 1: Secure slot in alumnos_clases FIRST
+      const sessionISO = `${sessionDate}T${clase.hora_inicio || "19:00"}:00.000Z`;
+      const { data: insertedRow, error: insertErr } = await supabase
+        .from("alumnos_clases")
+        .insert([{
+          alumno_id: currentStudent.id,
+          clase_id: classUUID,
+          asignado_en: sessionISO
+        }])
+        .select("id")
+        .single();
+
+      if (insertErr || !insertedRow) {
+        throw new Error(insertErr?.message || "No se pudo asegurar la plaza en la base de datos.");
+      }
+
+      // 7. Transaction Inversion Step 2: Contender-Partitioned Contention Tie-Breaker
+      const { data: allBookings, error: tieBreakerErr } = await supabase
+        .from("alumnos_clases")
+        .select("id")
+        .eq("clase_id", classUUID)
+        .gte("asignado_en", `${sessionDate}T00:00:00`)
+        .lte("asignado_en", `${sessionDate}T23:59:59`);
+
+      if (!tieBreakerErr && allBookings && allBookings.length > maxCapacity) {
+        // Isolate only the concurrent contenders that arrived in this contention burst
+        const contenders = allBookings
+          .filter(b => !priorIdSet.has(b.id))
+          .sort((a, b) => (a.id < b.id ? -1 : 1));
+
+        const myContenderRank = contenders.findIndex(b => b.id === insertedRow.id);
+        if (myContenderRank >= availableSlots) {
+          // Exceeded remaining slots among contenders: roll back caller's slot immediately
+          await supabase.from("alumnos_clases").delete().eq("id", insertedRow.id);
+          throw new Error(`Aforo completo: otro usuario acaba de reservar la última plaza disponible (${maxCapacity}/${maxCapacity}). Tu saldo permanece intacto.`);
+        }
+      }
+
+      // 8. Transaction Inversion Step 3: Deduct 1 class from bono balance ONLY AFTER slot is confirmed
+      if (!hasUnlimited) {
+        const updatedBalance = Math.max(0, currentBalance - 1);
+        const { error: balanceErr } = await supabase
+          .from("alumnos")
+          .update({ clases_restantes: updatedBalance })
+          .eq("id", currentStudent.id);
+
+        if (balanceErr) {
+          // Rollback inserted slot if bono deduction failed
+          console.error("Failed to deduct bono balance, rolling back slot:", balanceErr);
+          await supabase.from("alumnos_clases").delete().eq("id", insertedRow.id);
+          throw new Error("Error al descontar la clase de tu bono. La reserva ha sido revertida para proteger tu saldo.");
+        }
+      }
+
+      // 9. Local storage cache & audit log
+      crearReservaOpenClass({
+        alumno_id: currentStudent.id,
+        alumno_nombre: currentStudent.nombre_completo,
+        alumno_email: currentStudent.email,
+        alumno_telefono: currentStudent.telefono,
+        alumno_dni: currentStudent.dni,
+        alumno_plan: currentStudent.plan_activo,
+        clase,
+        calendarDay
+      });
+
+      logActivity({
+        origen: "alumno",
+        tipo_evento: "reserva_bono",
+        descripcion: `Reserva de Open Class para el ${calendarDay.dayName} ${calendarDay.dayNumber} de ${calendarDay.monthName}: "${clase.nombre_clase}" (${clase.hora_inicio}h con ${clase.profesor})`,
+        usuario_afectado: currentStudent.nombre_completo,
+        sede: formatSedeName(clase.sede)
+      });
+
+      if (refetchStudents) {
+        await refetchStudents();
+      }
+
+      publishSyncEvent("df_reservas_updated");
+
+      setBookingConfirmationModal({ isOpen: false, clase: null, calendarDay: null });
+
+      setModal({
+        isOpen: true,
+        title: "🎉 ¡Reserva Confirmada!",
+        message: `Tu plaza para el ${calendarDay.dayName.toLowerCase()} ${calendarDay.dayNumber} de ${calendarDay.monthName} a las ${clase.hora_inicio}h en "${clase.nombre_clase}" con ${clase.profesor} ha quedado confirmada.\n\n¡Nos vemos en clase!`,
+        type: "success",
+        confirmText: "Ver Mis Clases",
+        onConfirm: () => router.push("/mis-clases")
+      });
+
+    } catch (err: any) {
+      console.error("Booking failed:", err);
+      setBookingConfirmationModal({ isOpen: false, clase: null, calendarDay: null });
+      setModal({
+        isOpen: true,
+        title: "No se pudo completar la reserva",
+        message: err.message || "Ocurrió un error inesperado al procesar la reserva. Inténtalo de nuevo.",
+        type: "warning"
+      });
+    } finally {
+      bookingMutexRef.current = false;
+      setIsBookingSubmitting(false);
     }
-
-    // Audit Log
-    logActivity({
-      origen: "alumno",
-      tipo_evento: "reserva_bono",
-      descripcion: `Reserva de Open Class para el ${calendarDay.dayName} ${calendarDay.dayNumber} de ${calendarDay.monthName}: "${clase.nombre_clase}" (${clase.hora_inicio}h con ${clase.profesor})`,
-      usuario_afectado: currentStudent.nombre_completo,
-      sede: formatSedeName(clase.sede)
-    });
-
-    setBookingConfirmationModal({ isOpen: false, clase: null, calendarDay: null });
-
-    setModal({
-      isOpen: true,
-      title: "🎉 ¡Reserva Confirmada!",
-      message: `Tu plaza para el ${calendarDay.dayName.toLowerCase()} ${calendarDay.dayNumber} de ${calendarDay.monthName} a las ${clase.hora_inicio}h en "${clase.nombre_clase}" con ${clase.profesor} ha quedado confirmada.\n\n¡Nos vemos en clase!`,
-      type: "success",
-      confirmText: "Ver Mis Clases",
-      onConfirm: () => router.push("/mis-clases")
-    });
   };
 
   const [paymentMethodTab, setPaymentMethodTab] = useState<"stripe" | "tpv" | "transferencia" | "recepcion">("stripe");
@@ -534,8 +654,6 @@ function ClasesContent() {
           const res = await fetch(`/api/redsys/verify-order?${queryParams.toString()}`);
           const data = await res.json();
           if (typeof window !== "undefined" && currentStudent?.id) {
-            localStorage.setItem(`df_matricula_octubre_paid_${currentStudent.id}`, "true");
-            localStorage.setItem(`df_matricula_paid_${currentStudent.id}`, "true");
             const expDate = data.bonoCaducidad || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
             localStorage.setItem(`df_bono_caducidad_${currentStudent.id}`, expDate);
             localStorage.setItem(`df_bono_purchase_date_${currentStudent.id}`, new Date().toISOString());
@@ -592,8 +710,6 @@ function ClasesContent() {
           const data = await res.json();
           if (data.success) {
             if (typeof window !== "undefined" && currentStudent?.id) {
-              localStorage.setItem(`df_matricula_octubre_paid_${currentStudent.id}`, "true");
-              localStorage.setItem(`df_matricula_paid_${currentStudent.id}`, "true");
               const expDate = data.bonoCaducidad || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
               localStorage.setItem(`df_bono_caducidad_${currentStudent.id}`, expDate);
               localStorage.setItem(`df_bono_purchase_date_${currentStudent.id}`, new Date().toISOString());
@@ -794,34 +910,8 @@ function ClasesContent() {
       console.warn("[Dance Factory] Error al registrar solicitud en base de datos:", dbErr);
     }
 
-    // 2. Local fallback
-    if (typeof window !== "undefined") {
-      try {
-        const rawReqs = localStorage.getItem("pending_bono_requests");
-        const reqs = rawReqs ? JSON.parse(rawReqs) : [];
-        const newReq = {
-          id: "req_transf_" + Date.now(),
-          student_id: currentStudent.id,
-          student_name: currentStudent.nombre_completo,
-          student_email: currentStudent.email || "",
-          bono_nombre: isExencionSolicitada
-            ? `${selectedBonoForPayment.nombre} (Matrícula Exenta por Dirección)`
-            : calc?.exemptionType === "october_renewal_50"
-            ? `${selectedBonoForPayment.nombre} (+7,50€ Matrícula 50% Renovación)`
-            : isFirstBonoOfYear 
-            ? `${selectedBonoForPayment.nombre} (+15€ Matrícula)` 
-            : selectedBonoForPayment.nombre,
-          bono_precio: `${totalAmount.toFixed(2)} €`,
-          metodo_pago: "Transferencia Bancaria",
-          fecha: new Date().toLocaleDateString("es-ES"),
-          sede: normalizeSede(currentStudent.sede || "tejar")
-        };
-        localStorage.setItem("pending_bono_requests", JSON.stringify([newReq, ...reqs]));
-        window.dispatchEvent(new Event("df_pending_bonos_updated"));
-      } catch (e) {
-        console.error("Error saving pending transfer request:", e);
-      }
-    }
+    // 2. Real-time broadcast (Zero localStorage)
+    publishSyncEvent("df_pending_bonos_updated", { alumno_id: currentStudent.id });
 
     logActivity({
       origen: "alumno",
@@ -865,34 +955,8 @@ function ClasesContent() {
       console.warn("[Dance Factory] Error al registrar solicitud en base de datos:", dbErr);
     }
 
-    // 2. Local fallback
-    if (typeof window !== "undefined") {
-      try {
-        const rawReqs = localStorage.getItem("pending_bono_requests");
-        const reqs = rawReqs ? JSON.parse(rawReqs) : [];
-        const newReq = {
-          id: "req_rec_" + Date.now(),
-          student_id: currentStudent.id,
-          student_name: currentStudent.nombre_completo,
-          student_email: currentStudent.email || "",
-          bono_nombre: isExencionSolicitada
-            ? `${selectedBonoForPayment.nombre} (Matrícula Exenta por Dirección)`
-            : calc?.exemptionType === "october_renewal_50"
-            ? `${selectedBonoForPayment.nombre} (+7,50€ Matrícula 50% Renovación)`
-            : isFirstBonoOfYear 
-            ? `${selectedBonoForPayment.nombre} (+15€ Matrícula)` 
-            : selectedBonoForPayment.nombre,
-          bono_precio: `${totalAmount.toFixed(2)} €`,
-          metodo_pago: "Recepción (Efectivo/Datáfono)",
-          fecha: new Date().toLocaleDateString("es-ES"),
-          sede: normalizeSede(currentStudent.sede || "tejar")
-        };
-        localStorage.setItem("pending_bono_requests", JSON.stringify([newReq, ...reqs]));
-        window.dispatchEvent(new Event("df_pending_bonos_updated"));
-      } catch (e) {
-        console.error("Error saving pending bono request:", e);
-      }
-    }
+    // 2. Real-time broadcast (Zero localStorage)
+    publishSyncEvent("df_pending_bonos_updated", { alumno_id: currentStudent.id });
 
     logActivity({
       origen: "alumno",
@@ -1271,6 +1335,16 @@ function ClasesContent() {
                             <AlertCircle size={15} />
                             <span>Plazas Agotadas (Completo)</span>
                           </span>
+                        ) : (!sessionStatus.puedeReservar && sessionStatus.status === "confirmada") ? (
+                          <button
+                            disabled
+                            aria-disabled="true"
+                            title={sessionStatus.motivoBloqueo || "Inscripciones cerradas (clase confirmada)"}
+                            className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700/80 shadow-none cursor-not-allowed opacity-80 flex items-center gap-1.5"
+                          >
+                            <Lock size={14} className="text-slate-400 shrink-0" />
+                            <span>Inscripciones cerradas (clase confirmada)</span>
+                          </button>
                         ) : (
                           <button
                             onClick={() => handleOpenBookingModal(clase)}
@@ -1780,15 +1854,28 @@ function ClasesContent() {
             <div className="flex gap-2.5 pt-1">
               <button
                 onClick={() => setBookingConfirmationModal({ isOpen: false, clase: null, calendarDay: null })}
-                className="flex-1 py-3 rounded-xl bg-[var(--color-bg)] hover:bg-[var(--color-bg-hover)] text-slate-300 text-xs font-bold border border-[var(--color-border)] transition-colors cursor-pointer"
+                disabled={isBookingSubmitting}
+                className={`flex-1 py-3 rounded-xl bg-[var(--color-bg)] text-slate-300 text-xs font-bold border border-[var(--color-border)] transition-colors ${
+                  isBookingSubmitting ? "opacity-50 cursor-not-allowed" : "hover:bg-[var(--color-bg-hover)] cursor-pointer"
+                }`}
               >
                 Cancelar
               </button>
               <button
                 onClick={handleConfirmReservation}
-                className="flex-1 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold transition-all shadow-lg shadow-amber-500/30 active:scale-95 cursor-pointer"
+                disabled={isBookingSubmitting}
+                className={`flex-1 py-3 rounded-xl bg-amber-400 text-slate-950 text-xs font-extrabold transition-all shadow-lg shadow-amber-500/30 flex items-center justify-center gap-2 ${
+                  isBookingSubmitting ? "opacity-60 cursor-not-allowed" : "hover:bg-amber-300 active:scale-95 cursor-pointer"
+                }`}
               >
-                Confirmar (1 Clase)
+                {isBookingSubmitting ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin text-slate-950" />
+                    <span>Confirmando plaza...</span>
+                  </>
+                ) : (
+                  <span>Confirmar (1 Clase)</span>
+                )}
               </button>
             </div>
 

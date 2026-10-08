@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { supabase } from "@/lib/supabase/client";
 import { generateAndSendOtp, verifyOtpCode, clearActiveOtp } from "@/lib/otpService";
 import { isRegularClassStudent, hasPaidSeasonMatricula } from "@/lib/matriculaService";
+import { subscribeSyncEvent } from "@/lib/syncEventBus";
 
 export interface Student {
   id: string;
@@ -294,6 +295,30 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         window.removeEventListener("focus", handleVisibilityOrFocus);
         document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
       }
+    };
+  }, []);
+
+  // Real-time cross-device sync reactivity (R7.1 & R7.2)
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    const triggerRefetch = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        fetchStudents();
+      }, 350);
+    };
+
+    const unsubPagos = subscribeSyncEvent("df_pagos_updated", triggerRefetch);
+    const unsubBonos = subscribeSyncEvent("df_pending_bonos_updated", triggerRefetch);
+    const unsubReservas = subscribeSyncEvent("df_reservas_updated", triggerRefetch);
+    const unsubCheckin = subscribeSyncEvent("df_checkin_success", triggerRefetch);
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubPagos();
+      unsubBonos();
+      unsubReservas();
+      unsubCheckin();
     };
   }, []);
 

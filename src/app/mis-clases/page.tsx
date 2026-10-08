@@ -35,8 +35,10 @@ import {
   formatSedeName,
   normalizeClaseId,
   syncReservasFromSupabase,
-  isReservaCancelable
+  isReservaCancelable,
+  deleteAlumnosClasesBySessionDate
 } from "@/lib/openClassService";
+import { publishSyncEvent } from "@/lib/syncEventBus";
 
 export default function MisClasesPage() {
   const router = useRouter();
@@ -156,30 +158,20 @@ export default function MisClasesPage() {
       if (refetchStudents) await refetchStudents();
     }
 
-    // 3. Delete specific session enrollment from alumnos_clases in Supabase
+    // 3. Delete specific session enrollment from alumnos_clases in Supabase safely
     try {
-      if (reserva.clase_id && currentStudent.id) {
-        const targetClassId = normalizeClaseId(reserva.clase_id);
-        const sessionDate = reserva.fecha_iso;
-        if (sessionDate) {
-          await supabase
-            .from("alumnos_clases")
-            .delete()
-            .eq("alumno_id", currentStudent.id)
-            .eq("clase_id", targetClassId)
-            .gte("asignado_en", `${sessionDate}T00:00:00`)
-            .lte("asignado_en", `${sessionDate}T23:59:59`);
-        } else {
-          await supabase
-            .from("alumnos_clases")
-            .delete()
-            .eq("alumno_id", currentStudent.id)
-            .eq("clase_id", targetClassId);
-        }
+      if (reserva.clase_id && currentStudent.id && reserva.fecha_iso) {
+        await deleteAlumnosClasesBySessionDate(
+          currentStudent.id,
+          reserva.clase_id,
+          reserva.fecha_iso
+        );
       }
     } catch (e) {
       console.warn("Could not delete from alumnos_clases:", e);
     }
+
+    publishSyncEvent("df_reservas_updated");
 
     // Audit Log
     logActivity({

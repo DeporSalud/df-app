@@ -32,8 +32,18 @@ import {
   cleanDateISO,
   OpenClassReserva,
   getNextUpcomingSessionDate,
-  getTodayISO
+  getTodayISO,
+  deleteAlumnosClasesBySessionDate
 } from "@/lib/openClassService";
+import { publishSyncEvent } from "@/lib/syncEventBus";
+import {
+  getMadridDateISO,
+  getMadridDateString,
+  getMadridTimeString,
+  toMadridSessionISO,
+  getMadridDayRangeUTC,
+  isSameMadridDay
+} from "@/lib/timezones";
 
 const getDayOrder = (day: string) => {
   const days: Record<string, number> = {
@@ -56,26 +66,71 @@ const isStudio1 = (sede?: string | null): boolean => {
 };
 
 const TEACHER_DB_ID_MAP: Record<string, string> = {
+  // 1001: Lucía Muñoz
   "LUCIA MUNOZ": "c57fb3d0-525f-474a-8de7-d6d504b540be",
   "LUCÍA MUÑOZ": "c57fb3d0-525f-474a-8de7-d6d504b540be",
   "1001": "c57fb3d0-525f-474a-8de7-d6d504b540be",
+
+  // 1002: Lucía Zamorano
+  "LUCIA ZAMORANO": "2d95e851-b927-494b-9558-d7ed6d447a20",
+  "LUCÍA ZAMORANO": "2d95e851-b927-494b-9558-d7ed6d447a20",
+  "1002": "2d95e851-b927-494b-9558-d7ed6d447a20",
+
+  // 1003: Andrea Soto
+  "ANDREA SOTO": "7a100300-0000-4000-a000-000000001003",
+  "1003": "7a100300-0000-4000-a000-000000001003",
+
+  // 1004: Eva Leiva
+  "EVA LEIVA": "80c59814-1ab4-4793-9039-e8fe1c5ef681",
+  "1004": "80c59814-1ab4-4793-9039-e8fe1c5ef681",
+
+  // 1005: Lucas López
+  "LUCAS LOPEZ": "7a100500-0000-4000-a000-000000001005",
+  "LUCAS LÓPEZ": "7a100500-0000-4000-a000-000000001005",
+  "1005": "7a100500-0000-4000-a000-000000001005",
+
+  // 1006: Paula Jiménez
   "PAULA JIMENEZ": "32d7139b-b2a2-4084-9322-d86cda358df7",
   "PAULA JIMÉNEZ": "32d7139b-b2a2-4084-9322-d86cda358df7",
   "1006": "32d7139b-b2a2-4084-9322-d86cda358df7",
+
+  // 1007: Abel y Nayara
+  "ABEL Y NAYARA": "7a100700-0000-4000-a000-000000001007",
+  "1007": "7a100700-0000-4000-a000-000000001007",
+
+  // 1008: Darío Humberto
+  "DARIO HUMBERTO": "7a100800-0000-4000-a000-000000001008",
+  "DARÍO HUMBERTO": "7a100800-0000-4000-a000-000000001008",
+  "1008": "7a100800-0000-4000-a000-000000001008",
+
+  // 1009: Nerea Olivares
+  "NEREA OLIVARES": "7a100900-0000-4000-a000-000000001009",
+  "1009": "7a100900-0000-4000-a000-000000001009",
+
+  // 1010: Alejandro Rovina
+  "ALEJANDRO ROVINA": "7a101000-0000-4000-a000-000000001010",
+  "1010": "7a101000-0000-4000-a000-000000001010",
+
+  // 1011: Nil Barberá
+  "NIL BARBERA": "7a101100-0000-4000-a000-000000001011",
+  "NIL BARBERÁ": "7a101100-0000-4000-a000-000000001011",
+  "1011": "7a101100-0000-4000-a000-000000001011",
+
+  // 1012: Mario Gadea
+  "MARIO GADEA": "145547d1-643c-40aa-9144-305893e8f64c",
+  "1012": "145547d1-643c-40aa-9144-305893e8f64c",
+
+  // 1013: Daniela Mérida
+  "DANIELA MERIDA": "0812eb2d-bcb5-4f9e-b690-1beaafcd3e61",
+  "DANIELA MÉRIDA": "0812eb2d-bcb5-4f9e-b690-1beaafcd3e61",
+  "1013": "0812eb2d-bcb5-4f9e-b690-1beaafcd3e61",
+
+  // 1014: Marta García Vázquez
   "MARTA GARCIA": "e9cc4200-aba2-4e67-8191-808c40e75621",
   "MARTA GARCÍA": "e9cc4200-aba2-4e67-8191-808c40e75621",
   "MARTA GARCIA VAZQUEZ": "e9cc4200-aba2-4e67-8191-808c40e75621",
   "MARTA GARCÍA VÁZQUEZ": "e9cc4200-aba2-4e67-8191-808c40e75621",
-  "1014": "e9cc4200-aba2-4e67-8191-808c40e75621",
-  "EVA LEIVA": "80c59814-1ab4-4793-9039-e8fe1c5ef681",
-  "1004": "80c59814-1ab4-4793-9039-e8fe1c5ef681",
-  "MARIO GADEA": "145547d1-643c-40aa-9144-305893e8f64c",
-  "1012": "145547d1-643c-40aa-9144-305893e8f64c",
-  "LUCIA ZAMORANO": "2d95e851-b927-494b-9558-d7ed6d447a20",
-  "LUCÍA ZAMORANO": "2d95e851-b927-494b-9558-d7ed6d447a20",
-  "1002": "2d95e851-b927-494b-9558-d7ed6d447a20",
-  "ALEJANDRO ROVINA": "00000000-0000-0000-0000-000000001010",
-  "1010": "00000000-0000-0000-0000-000000001010"
+  "1014": "e9cc4200-aba2-4e67-8191-808c40e75621"
 };
 
 const isRegularMembership = (plan?: string | null, remaining?: number | null): boolean => {
@@ -216,21 +271,35 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
         return normalizeText(s.nombre_completo).includes(normName);
       });
 
-      if (!tStudent && explicitUUID) {
-        const { data: singleProf } = await supabase.from("alumnos").select("*").eq("id", explicitUUID).maybeSingle();
-        if (singleProf) tStudent = singleProf;
+      if (!tStudent) {
+        const resolvedUUID = explicitUUID || (currentTeacher?.id ? TEACHER_DB_ID_MAP[currentTeacher.id] : undefined) || TEACHER_DB_ID_MAP[teacherName.toUpperCase()];
+        if (resolvedUUID) {
+          const { data: singleProf } = await supabase.from("alumnos").select("*").eq("id", resolvedUUID).maybeSingle();
+          if (singleProf) tStudent = singleProf;
+        }
       }
 
       if (!tStudent) {
-        tStudent = {
-          id: explicitUUID || ("docente_" + (currentTeacher?.id || "1001")),
-          nombre_completo: teacherName,
-          email: currentTeacher?.email || "docente@dancefactory.es",
-          plan_activo: "Docente Dance Factory",
-          clases_restantes: 4,
-          estado: "Activo",
-          sede: currentTeacher?.sede || "tejar"
-        };
+        const resolvedUUID = explicitUUID || (currentTeacher?.id ? TEACHER_DB_ID_MAP[currentTeacher.id] : undefined) || TEACHER_DB_ID_MAP[teacherName.toUpperCase()];
+        if (resolvedUUID) {
+          const newProfRecord = {
+            id: resolvedUUID,
+            nombre_completo: teacherName,
+            email: currentTeacher?.email || `${normalizeText(teacherName).replace(/\s+/g, ".")}@dancefactory.es`,
+            telefono: "600000000",
+            plan_activo: "Docente Dance Factory",
+            clases_restantes: 4,
+            estado: "Activo",
+            sede: currentTeacher?.sede || "castilla",
+            nfc_token: `PROF-${currentTeacher?.id || "1000"}`
+          };
+          const { data: created } = await supabase
+            .from("alumnos")
+            .insert([newProfRecord])
+            .select()
+            .maybeSingle();
+          tStudent = created || newProfRecord;
+        }
       }
       setTeacherStudent(tStudent);
 
@@ -293,8 +362,8 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       const allAtts = allAttendancesData || [];
       setClassAllAttendances(allAtts);
 
-      // Filter for active session date
-      const activeSessionAtts = allAtts.filter(a => a.fecha_hora && a.fecha_hora.startsWith(dateIso));
+      // Filter for active session date in Europe/Madrid
+      const activeSessionAtts = allAtts.filter(a => a.fecha_hora && isSameMadridDay(a.fecha_hora, dateIso));
       setAsistenciasRegistradas(activeSessionAtts.map(a => a.alumno_id));
 
       if (isOpenClass(clase)) {
@@ -532,9 +601,11 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
 
   // 3. Digital Roll Call Toggle
   const handleToggleAsistencia = async (student: any) => {
-    if (!selectedClase?.id) return;
+    if (!selectedClase?.id || savingId) return;
     setSavingId(student.id);
-    const targetDate = selectedSessionDate || new Date().toISOString().split("T")[0];
+    const targetDate = selectedSessionDate || getMadridDateISO();
+    const selectedClassUUID = normalizeClaseId(selectedClase.id);
+    const { startISO, endISO } = getMadridDayRangeUTC(targetDate);
 
     try {
       const yaAsistio = asistenciasRegistradas.includes(student.id);
@@ -557,17 +628,17 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
           }
         }
 
-        const selectedClassUUID = normalizeClaseId(selectedClase.id);
         await supabase
           .from("asistencias")
           .delete()
           .eq("alumno_id", student.id)
           .eq("clase_id", selectedClassUUID)
-          .gte("fecha_hora", targetDate + "T00:00:00")
-          .lte("fecha_hora", targetDate + "T23:59:59");
+          .gte("fecha_hora", startISO)
+          .lte("fecha_hora", endISO);
 
         setAsistenciasRegistradas(prev => prev.filter(id => id !== student.id));
-        setClassAllAttendances(prev => prev.filter(a => !(a.alumno_id === student.id && a.fecha_hora && a.fecha_hora.startsWith(targetDate))));
+        setClassAllAttendances(prev => prev.filter(a => !(a.alumno_id === student.id && a.fecha_hora && isSameMadridDay(a.fecha_hora, targetDate))));
+        publishSyncEvent("df_reservas_updated");
 
         logActivity({
           origen: "profesor",
@@ -577,7 +648,20 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
           sede: selectedClase.sede === "tejar" ? "Studio 1 Plaza El Tejar" : "Studio 2 Paseo Castilla"
         });
       } else {
-        const selectedClassUUID = normalizeClaseId(selectedClase.id);
+        // Idempotency check: verify in Supabase before insertion
+        const { data: existing } = await supabase
+          .from("asistencias")
+          .select("id")
+          .eq("alumno_id", student.id)
+          .eq("clase_id", selectedClassUUID)
+          .gte("fecha_hora", startISO)
+          .lte("fecha_hora", endISO);
+
+        if (existing && existing.length > 0) {
+          setAsistenciasRegistradas(prev => prev.includes(student.id) ? prev : [...prev, student.id]);
+          return;
+        }
+
         const isPrepaidOpenClass = isOpenClass(selectedClase) || Boolean(student.reserva_id);
 
         if (!isRegular && !isPrepaidOpenClass && typeof student.clases_restantes === "number" && student.clases_restantes > 0) {
@@ -590,16 +674,10 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
           setDeductedStudentIds(prev => new Set(prev).add(student.id));
         }
 
-        // Construction of correct attendance timestamp in local timezone
-        const now = new Date();
-        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-        let attendanceISO = now.toISOString();
-
-        if (targetDate && targetDate !== todayStr) {
-          const [y, m, d] = targetDate.split("-").map(Number);
-          const [h, min] = (selectedClase.hora_inicio || "18:00").split(":").map(Number);
-          attendanceISO = new Date(y, (m || 1) - 1, d || 1, h || 0, min || 0, 0).toISOString();
-        }
+        // Construction of correct attendance timestamp in Madrid timezone
+        const attendanceISO = targetDate === getMadridDateISO()
+          ? new Date().toISOString()
+          : toMadridSessionISO(targetDate, selectedClase.hora_inicio || "18:00");
 
         await supabase.from("asistencias").insert([{
           alumno_id: student.id,
@@ -613,6 +691,13 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
           alumno_id: student.id,
           fecha_hora: attendanceISO
         }]);
+
+        publishSyncEvent("df_checkin_success", {
+          alumno_id: student.id,
+          alumno_nombre: student.nombre_completo,
+          clase_id: selectedClassUUID,
+          count: 1
+        });
 
         logActivity({
           origen: "profesor",
@@ -630,22 +715,32 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   };
 
   const handleMarkAllPresent = async () => {
-    if (!selectedClase?.id || roster.length === 0) return;
+    if (!selectedClase?.id || roster.length === 0 || savingId) return;
     setSavingId("ALL");
-    const targetDate = selectedSessionDate || getTodayISO();
+    const targetDate = selectedSessionDate || getMadridDateISO();
     const selectedClassUUID = normalizeClaseId(selectedClase.id);
+    const { startISO, endISO } = getMadridDayRangeUTC(targetDate);
 
     try {
-      const studentsToMark = roster.filter(s => !asistenciasRegistradas.includes(s.id));
-      const now = new Date();
-      const todayStr = getTodayISO();
-      let attendanceISO = now.toISOString();
+      // Query existing attendances in Supabase to avoid duplicates
+      const { data: existingAll } = await supabase
+        .from("asistencias")
+        .select("alumno_id")
+        .eq("clase_id", selectedClassUUID)
+        .gte("fecha_hora", startISO)
+        .lte("fecha_hora", endISO);
 
-      if (targetDate && targetDate !== todayStr) {
-        const [y, m, d] = targetDate.split("-").map(Number);
-        const [h, min] = (selectedClase.hora_inicio || "18:00").split(":").map(Number);
-        attendanceISO = new Date(y, (m || 1) - 1, d || 1, h || 0, min || 0, 0).toISOString();
+      const alreadyMarkedSet = new Set((existingAll || []).map(r => r.alumno_id));
+      const studentsToMark = roster.filter(s => !alreadyMarkedSet.has(s.id));
+
+      if (studentsToMark.length === 0) {
+        setAsistenciasRegistradas(roster.map(s => s.id));
+        return;
       }
+
+      const attendanceISO = targetDate === getMadridDateISO()
+        ? new Date().toISOString()
+        : toMadridSessionISO(targetDate, selectedClase.hora_inicio || "18:00");
 
       const newCheckins: any[] = [];
       for (const student of studentsToMark) {
@@ -673,7 +768,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
         await supabase.from("asistencias").insert(newCheckins);
         setAsistenciasRegistradas(roster.map(s => s.id));
         setClassAllAttendances(prev => [
-          ...prev.filter(a => !(a.fecha_hora && a.fecha_hora.startsWith(targetDate))),
+          ...prev.filter(a => !(a.fecha_hora && isSameMadridDay(a.fecha_hora, targetDate))),
           ...newCheckins.map((c, i) => ({ id: "temp_all_" + i + "_" + Date.now(), ...c }))
         ]);
 
@@ -693,21 +788,22 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   };
 
   const handleClearAllPresent = async () => {
-    if (!selectedClase?.id || asistenciasRegistradas.length === 0) return;
+    if (!selectedClase?.id || asistenciasRegistradas.length === 0 || savingId) return;
     setSavingId("ALL");
-    const targetDate = selectedSessionDate || getTodayISO();
+    const targetDate = selectedSessionDate || getMadridDateISO();
     const selectedClassUUID = normalizeClaseId(selectedClase.id);
+    const { startISO, endISO } = getMadridDayRangeUTC(targetDate);
 
     try {
       await supabase
         .from("asistencias")
         .delete()
         .eq("clase_id", selectedClassUUID)
-        .gte("fecha_hora", targetDate + "T00:00:00")
-        .lte("fecha_hora", targetDate + "T23:59:59");
+        .gte("fecha_hora", startISO)
+        .lte("fecha_hora", endISO);
 
       setAsistenciasRegistradas([]);
-      setClassAllAttendances(prev => prev.filter(a => !(a.fecha_hora && a.fecha_hora.startsWith(targetDate))));
+      setClassAllAttendances(prev => prev.filter(a => !(a.fecha_hora && isSameMadridDay(a.fecha_hora, targetDate))));
 
       logActivity({
         origen: "profesor",
@@ -864,6 +960,16 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       cancelarReservaOpenClass(found.id);
     }
 
+    try {
+      await deleteAlumnosClasesBySessionDate(
+        teacherStudent.id,
+        clase.id,
+        selectedCalendarDay.dateISO
+      );
+    } catch (e) {
+      console.warn("Error deleting teacher reservation from alumnos_clases:", e);
+    }
+
     // Refund 1 class
     const hasUnlimited = (teacherStudent.plan_activo || "").toLowerCase().includes("ilimitad");
     if (!hasUnlimited && typeof teacherStudent.clases_restantes === "number") {
@@ -879,6 +985,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
     if (typeof window !== "undefined") {
       window.dispatchEvent(new Event("df_reservas_updated"));
     }
+    publishSyncEvent("df_reservas_updated");
 
     setModal({
       isOpen: true,
@@ -903,44 +1010,8 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
 
       setTeacherStudent((prev: any) => ({ ...prev, plan_activo: pendingPlanText }));
 
-      if (typeof window !== "undefined") {
-        const storedLocal = JSON.parse(localStorage.getItem("pending_bono_requests") || "[]");
-        const newReq = {
-          id: "req_docente_" + Date.now(),
-          student_id: teacherStudent.id,
-          student_name: teacherName + " (Docente)",
-          student_email: currentTeacher?.email || "docente@dancefactory.es",
-          bono_nombre: selectedBonoForPayment.nombre,
-          bono_precio: selectedBonoForPayment.precioDocente,
-          fecha: "Hoy (Docente)",
-          estado: "Pendiente de cobro en Recepción"
-        };
-        localStorage.setItem("pending_bono_requests", JSON.stringify([newReq, ...storedLocal]));
-
-        const rawPayments = localStorage.getItem("df_pagos_transacciones_v1");
-        const allPayments = rawPayments ? JSON.parse(rawPayments) : [];
-        const now = new Date();
-        const pendingTx = {
-          id: "pago_docente_pending_" + Date.now(),
-          numero_recibo: "PEND-" + now.getFullYear() + "-" + Math.floor(1000 + Math.random() * 9000),
-          fecha_hora: now.toISOString(),
-          fecha_corta: now.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" }),
-          hora_corta: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          alumno_id: teacherStudent.id,
-          alumno_nombre: teacherName + " (Docente)",
-          alumno_dni: "Docente DF",
-          concepto: selectedBonoForPayment.nombre + " (-10% dto Docente)",
-          categoria: "bono",
-          importe: selectedBonoForPayment.precioNum,
-          metodo_pago: "Pendiente Recepción",
-          sede: currentTeacher?.sede || "castilla",
-          atendido_por: "Solicitud Portal Profesor",
-          notas: "Solicitud de bono docente con 10% dto en standby para abonar en recepción",
-          estado: "Pendiente"
-        };
-        localStorage.setItem("df_pagos_transacciones_v1", JSON.stringify([pendingTx, ...allPayments]));
-        window.dispatchEvent(new Event("df_pagos_updated"));
-      }
+      // 2. Cross-app reactivity broadcast (Zero localStorage)
+      publishSyncEvent("df_pending_bonos_updated", { alumno_id: teacherStudent.id });
 
       logActivity({
         origen: "profesor",
