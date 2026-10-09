@@ -413,8 +413,8 @@ function ClasesContent() {
       }
 
       const hoursRemaining = getHorasRestantesParaSesion(sessionDate, clase.hora_inicio);
-      if (hoursRemaining < 5.0) {
-        throw new Error("Plazo de reserva cerrado para esta sesión: las reservas cierran estrictamente 5 horas antes.");
+      if (hoursRemaining <= 0) {
+        throw new Error("La sesión ya ha comenzado o finalizado.");
       }
 
       // 4. Pre-check: Idempotency Check (Prevent duplicate booking by same student for same date)
