@@ -494,7 +494,18 @@ function ClasesContent() {
 
       // 8. Transaction Inversion Step 3: Deduct 1 class from bono balance ONLY AFTER slot is confirmed
       if (!hasUnlimited) {
-        const updatedBalance = Math.max(0, currentBalance - 1);
+        // ALWAYS fetch FRESH balance directly from Supabase to prevent overwriting with stale client cache
+        const { data: freshDbStudent } = await supabase
+          .from("alumnos")
+          .select("clases_restantes")
+          .eq("id", currentStudent.id)
+          .single();
+
+        const actualDbBalance = typeof freshDbStudent?.clases_restantes === "number"
+          ? freshDbStudent.clases_restantes
+          : currentBalance;
+
+        const updatedBalance = Math.max(0, actualDbBalance - 1);
         const { error: balanceErr } = await supabase
           .from("alumnos")
           .update({ clases_restantes: updatedBalance })

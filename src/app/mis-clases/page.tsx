@@ -152,8 +152,18 @@ export default function MisClasesPage() {
     // 2. Refund 1 class to student's bono
     const hasUnlimited = currentStudent.plan_activo?.toLowerCase().includes("ilimitad");
     if (!hasUnlimited) {
-      const remainingClasses = typeof currentStudent.clases_restantes === "number" ? currentStudent.clases_restantes : 0;
-      const updatedBalance = remainingClasses + 1;
+      // ALWAYS fetch FRESH balance directly from Supabase before refunding
+      const { data: freshDbStudent } = await supabase
+        .from("alumnos")
+        .select("clases_restantes")
+        .eq("id", currentStudent.id)
+        .single();
+
+      const actualDbBalance = typeof freshDbStudent?.clases_restantes === "number"
+        ? freshDbStudent.clases_restantes
+        : (typeof currentStudent.clases_restantes === "number" ? currentStudent.clases_restantes : 0);
+
+      const updatedBalance = actualDbBalance + 1;
       await supabase.from("alumnos").update({ clases_restantes: updatedBalance }).eq("id", currentStudent.id);
       if (refetchStudents) await refetchStudents();
     }
