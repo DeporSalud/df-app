@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, Suspense } from "react";
+import { useState, useEffect, useRef, useMemo, Suspense } from "react";
 import { 
   QrCode, 
   Calendar, 
@@ -83,8 +83,8 @@ function ClasesContent() {
     return <TeacherPortalView initialTab={teacherTab} />;
   }
 
-  // Calendar Days state for Open Class booking
-  const calendarDays = getUpcomingCalendarDates(30);
+  // Calendar Days state for Open Class booking (memoized to avoid regenerating on every render)
+  const calendarDays = useMemo(() => getUpcomingCalendarDates(30), []);
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<CalendarDayItem>(calendarDays[0]);
 
   // Selected session to book modal state
@@ -107,12 +107,14 @@ function ClasesContent() {
   }, []);
 
   const [clases, setClases] = useState<any[]>([]);
-  const [openClasses, setOpenClasses] = useState<any[]>([]);
+  const [openClasses, setOpenClasses] = useState<any[]>(DEFAULT_STUDIO2_OPEN_CLASSES);
   const [assignedClassIds, setAssignedClassIds] = useState<string[]>([]);
   const [selectedSede, setSelectedSede] = useState<string>("tejar");
   const [selectedDay, setSelectedDay] = useState<string>("LUNES");
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [reservasTick, setReservasTick] = useState(0);
+  const allSedeClassesRef = useRef<Record<string, any[]>>({});
+  const hasLoadedOnceRef = useRef<boolean>(false);
 
   // Promo Septiembre: Colectivo (Alumnos DF vs No Alumnos)
   const isStudentAlumnoDF = isRegularClassStudent(currentStudent, { assignedClassIds });
@@ -127,12 +129,17 @@ function ClasesContent() {
   }, [isStudentAlumnoDF]);
 
   useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
     const handleUpdate = () => {
-      setReservasTick(prev => prev + 1);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        setReservasTick(prev => prev + 1);
+      }, 150);
     };
     window.addEventListener("df_reservas_updated", handleUpdate);
     window.addEventListener("storage", handleUpdate);
     return () => {
+      if (timer) clearTimeout(timer);
       window.removeEventListener("df_reservas_updated", handleUpdate);
       window.removeEventListener("storage", handleUpdate);
     };
@@ -224,86 +231,113 @@ function ClasesContent() {
     else if (tabParam === "regulares") setActiveTab("regulares");
   }, [tabParam]);
 
-  const fetchClasesAndAssignments = async () => {
-    setIsLoading(true);
-
-    // 1. Fetch regular classes for selected Sede
-    let regQuery = supabase.from("clases_cuadrante").select("*");
-    if (selectedSede === "tejar") {
-      regQuery = regQuery.in("sede", ["tejar", "studio", "mostoles"]);
-    } else {
-      regQuery = regQuery.in("sede", ["castilla", "alcorcon"]);
+  const fetchClasesAndAssignments = async (silent = false) => {
+    if (!silent && !hasLoadedOnceRef.current && clases.length === 0) {
+      setIsLoading(true);
     }
 
-    const { data: regClasses } = await regQuery;
-    if (regClasses) {
-      const regularesList = regClasses.filter(c => 
+    try {
+      // 1. Fetch regular classes for selected Sede
+      let regQuery = supabase.from("clases_cuadrante").select("*");
+      if (selectedSede === "tejar") {
+        regQuery = regQuery.in("sede", ["tejar", "studio", "mostoles"]);
+      } else {
+        regQuery = regQuery.in("sede", ["castilla", "alcorcon"]);
+      }
+
+      const { data: regClasses } = await regQuery;
+      if (regClasses && regClasses.length > 0) {
+        allSedeClassesRef.current[selectedSede] = regClasses;
+        const regularesList = regClasses.filter(c => 
+          normalizeDay(c.dia_semana) === normalizeDay(selectedDay) &&
+          !c.nombre_clase.toUpperCase().includes("OPEN CLASS") &&
+          !c.nombre_clase.toUpperCase().includes("FORMACI")
+        );
+        setClases(regularesList);
+      } else if (allSedeClassesRef.current[selectedSede]) {
+        const regularesList = allSedeClassesRef.current[selectedSede].filter(c => 
+          normalizeDay(c.dia_semana) === normalizeDay(selectedDay) &&
+          !c.nombre_clase.toUpperCase().includes("OPEN CLASS") &&
+          !c.nombre_clase.toUpperCase().includes("FORMACI")
+        );
+        setClases(regularesList);
+      }
+
+      // 2. Open Classes are EXCLUSIVELY in Studio 2 (Paseo Castilla)
+      const { data: studio2Classes } = await supabase
+        .from("clases_cuadrante")
+        .select("*")
+        .in("sede", ["castilla", "alcorcon"]);
+
+      let openList = (studio2Classes || []).filter(c => 
+        c.tipo_clase === "Open Class" || 
+        c.nombre_clase.toUpperCase().includes("OPEN CLASS") ||
+        c.nombre_clase.toUpperCase().includes("FORMACI")
+      );
+
+      if (openList.length > 0) {
+        setOpenClasses(openList);
+      }
+
+      if (currentStudent?.id) {
+        const { data: assigned } = await supabase
+          .from("alumnos_clases")
+          .select("clase_id")
+          .eq("alumno_id", currentStudent.id);
+        
+        if (assigned) {
+          setAssignedClassIds(assigned.map(a => a.clase_id));
+        }
+      }
+
+      try {
+        await syncReservasFromSupabase();
+      } catch (e) {}
+    } finally {
+      hasLoadedOnceRef.current = true;
+      setIsLoading(false);
+    }
+  };
+
+  // Instant in-memory filter when selected day or sede changes
+  useEffect(() => {
+    if (allSedeClassesRef.current[selectedSede]) {
+      const filtered = allSedeClassesRef.current[selectedSede].filter(c => 
         normalizeDay(c.dia_semana) === normalizeDay(selectedDay) &&
         !c.nombre_clase.toUpperCase().includes("OPEN CLASS") &&
         !c.nombre_clase.toUpperCase().includes("FORMACI")
       );
-      setClases(regularesList);
+      setClases(filtered);
     }
-
-    // 2. Open Classes are EXCLUSIVELY in Studio 2 (Paseo Castilla)
-    const { data: studio2Classes } = await supabase
-      .from("clases_cuadrante")
-      .select("*")
-      .in("sede", ["castilla", "alcorcon"]);
-
-    let openList = (studio2Classes || []).filter(c => 
-      c.tipo_clase === "Open Class" || 
-      c.nombre_clase.toUpperCase().includes("OPEN CLASS") ||
-      c.nombre_clase.toUpperCase().includes("FORMACI")
-    );
-
-    if (openList.length === 0) {
-      openList = DEFAULT_STUDIO2_OPEN_CLASSES;
-    }
-    setOpenClasses(openList);
-
-    if (currentStudent?.id) {
-      const { data: assigned } = await supabase
-        .from("alumnos_clases")
-        .select("clase_id")
-        .eq("alumno_id", currentStudent.id);
-      
-      if (assigned) {
-        setAssignedClassIds(assigned.map(a => a.clase_id));
-      }
-    }
-
-    try {
-      await syncReservasFromSupabase();
-    } catch (e) {}
-
-    setIsLoading(false);
-  };
+  }, [selectedDay, selectedSede]);
 
   useEffect(() => {
-    fetchClasesAndAssignments();
-  }, [selectedSede, selectedDay, currentStudent?.id]);
+    fetchClasesAndAssignments(hasLoadedOnceRef.current);
+  }, [selectedSede, currentStudent?.id]);
 
-  // Filter Open Classes for the selected calendar day (Always Studio 2)
-  const openClassesForSelectedDay = (openClasses.length > 0 ? openClasses : DEFAULT_STUDIO2_OPEN_CLASSES).filter(c => {
-    if (normalizeDay(c.dia_semana) !== normalizeDay(selectedCalendarDay.dayName)) return false;
+  // Filter Open Classes for the selected calendar day (Always Studio 2, memoized)
+  const openClassesForSelectedDay = useMemo(() => {
+    const list = openClasses.length > 0 ? openClasses : DEFAULT_STUDIO2_OPEN_CLASSES;
+    return list.filter(c => {
+      if (normalizeDay(c.dia_semana) !== normalizeDay(selectedCalendarDay.dayName)) return false;
 
-    // Thursday Rotativas do not appear until October 2026
-    const isRotativa = 
-      c.nombre_clase?.toUpperCase().includes("ROTAT") || 
-      c.profesor?.toUpperCase().includes("ROTAT") ||
-      (c.tipo_clase || "").toUpperCase().includes("ROTAT");
+      // Thursday Rotativas do not appear until October 2026
+      const isRotativa = 
+        c.nombre_clase?.toUpperCase().includes("ROTAT") || 
+        c.profesor?.toUpperCase().includes("ROTAT") ||
+        (c.tipo_clase || "").toUpperCase().includes("ROTAT");
 
-    if (isRotativa) {
-      const selectedDate = new Date(selectedCalendarDay.dateISO + "T00:00:00");
-      const octoberStart = new Date("2026-10-01T00:00:00");
-      if (selectedDate < octoberStart) {
-        return false;
+      if (isRotativa) {
+        const selectedDate = new Date(selectedCalendarDay.dateISO + "T00:00:00");
+        const octoberStart = new Date("2026-10-01T00:00:00");
+        if (selectedDate < octoberStart) {
+          return false;
+        }
       }
-    }
 
-    return true;
-  });
+      return true;
+    });
+  }, [openClasses, selectedCalendarDay]);
 
   const handleOpenBookingModal = (clase: any) => {
     if (!currentStudent?.id) return;
@@ -1080,7 +1114,7 @@ function ClasesContent() {
 
             {/* List of Regular Classes */}
             <main className="p-6 space-y-4">
-              {isLoading ? (
+              {isLoading && clases.length === 0 ? (
                 <div className="p-12 text-center text-xs text-[var(--color-text-secondary)]">
                   Cargando clases regulares...
                 </div>
@@ -1228,7 +1262,7 @@ function ClasesContent() {
                 </span>
               </div>
 
-              {isLoading ? (
+              {isLoading && openClassesForSelectedDay.length === 0 ? (
                 <div className="p-8 text-center text-xs text-[var(--color-text-secondary)]">Cargando Open Classes...</div>
               ) : openClassesForSelectedDay.length === 0 ? (
                 <div className="p-8 text-center space-y-2 bg-[var(--color-bg-card)] rounded-3xl border border-[var(--color-border)] my-2 shadow-lg">

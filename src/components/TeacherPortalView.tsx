@@ -581,8 +581,12 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   // Listen to external bookings updates in real-time
   useEffect(() => {
     let timer: NodeJS.Timeout | null = null;
+    let versionTimer: NodeJS.Timeout | null = null;
     const handleReservasUpdated = () => {
-      setOpenClassReservasVersion(v => v + 1);
+      if (versionTimer) clearTimeout(versionTimer);
+      versionTimer = setTimeout(() => {
+        setOpenClassReservasVersion(v => v + 1);
+      }, 150);
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         if (selectedClase && selectedSessionDate) {
@@ -593,6 +597,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
     window.addEventListener("df_reservas_updated", handleReservasUpdated);
     window.addEventListener("storage", handleReservasUpdated);
     return () => {
+      if (versionTimer) clearTimeout(versionTimer);
       if (timer) clearTimeout(timer);
       window.removeEventListener("df_reservas_updated", handleReservasUpdated);
       window.removeEventListener("storage", handleReservasUpdated);
