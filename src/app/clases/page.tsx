@@ -65,6 +65,12 @@ import {
   hasPurchasedSeptemberBono,
   hasPaidOctoberRenewal
 } from "@/lib/matriculaService";
+import { 
+  getEndOfDayMadrid, 
+  calculateBonoDaysRemainingMadrid, 
+  isBonoExpiringSoonMadrid, 
+  formatMadridDateTime 
+} from "@/lib/timezones";
 
 function ClasesContent() {
   const router = useRouter();
@@ -154,7 +160,11 @@ function ClasesContent() {
 
   let expirationDate: Date | null = null;
   if (hasRemainingClasses) {
-    expirationDate = calculateBonoExpirationDate(currentStudent, storedCaducidad);
+    const rawExp = calculateBonoExpirationDate(currentStudent, storedCaducidad);
+    if (rawExp) {
+      // Hardened to exact 23:59:59.999 Europe/Madrid cutoff
+      expirationDate = getEndOfDayMadrid(rawExp);
+    }
     // Sanar y sincronizar localStorage con la fecha oficial no corrupta
     if (expirationDate && typeof window !== "undefined" && currentStudent?.id) {
       const expISO = expirationDate.toISOString();
@@ -163,8 +173,8 @@ function ClasesContent() {
       }
     }
   }
-  const daysLeft = expirationDate ? Math.ceil((expirationDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null;
-  const isExpiringSoon = daysLeft !== null && daysLeft <= 7 && daysLeft > 0 && hasRemainingClasses;
+  const daysLeft = expirationDate ? calculateBonoDaysRemainingMadrid(expirationDate) : null;
+  const isExpiringSoon = expirationDate ? (isBonoExpiringSoonMadrid(expirationDate) && hasRemainingClasses) : false;
   const formattedExpiration = expirationDate ? expirationDate.toLocaleDateString("es-ES", {
     day: "numeric",
     month: "short"
@@ -183,25 +193,25 @@ function ClasesContent() {
       id: "Bono 4 clases", 
       nombre: "Bono 4 Clases", 
       precio: "45 €", 
-      desc: "4 clases • Validez 30 días naturales • Acceso exclusivo a OPEN CLASS" 
+      desc: "4 clases • Validez 30 días naturales (corte 23:59h Madrid) • Acceso exclusivo a OPEN CLASS" 
     },
     { 
       id: "Bono 8 clases", 
       nombre: "Bono 8 Clases", 
       precio: "57 €", 
-      desc: "8 clases (Recomendado) • Validez 30 días naturales • Acceso exclusivo a OPEN CLASS" 
+      desc: "8 clases (Recomendado) • Validez 30 días naturales (corte 23:59h Madrid) • Acceso exclusivo a OPEN CLASS" 
     },
     { 
       id: "Bono 10 clases", 
       nombre: "Bono 10 Clases", 
       precio: "79 €", 
-      desc: "10 clases • Validez 30 días naturales • Acceso exclusivo a OPEN CLASS" 
+      desc: "10 clases • Validez 30 días naturales (corte 23:59h Madrid) • Acceso exclusivo a OPEN CLASS" 
     },
     { 
       id: "Mensualidad Ilimitada", 
       nombre: "Pase Ilimitado Open Class", 
       precio: "100 € / mes", 
-      desc: "Tarifa plana mensual • Acceso ilimitado a todas las OPEN CLASS de la escuela" 
+      desc: "Tarifa plana mensual • Corte 23:59h Madrid • Acceso ilimitado a todas las OPEN CLASS de la escuela" 
     },
     { 
       id: "Clase Suelta", 
@@ -1199,7 +1209,7 @@ function ClasesContent() {
                 <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/40 flex items-center gap-2.5 text-xs text-amber-200">
                   <AlertTriangle size={16} className="text-amber-400 shrink-0 animate-pulse" />
                   <div className="flex-1 leading-tight">
-                    <strong>¡Tu bono caduca en {daysLeft} {daysLeft === 1 ? "día" : "días"}!</strong> (Vence el {formattedExpiration}). Aprovecha para reservar tus {currentStudent?.clases_restantes} clases pendientes.
+                    <strong>¡Tu bono caduca en {daysLeft} {daysLeft === 1 ? "día" : "días"}!</strong> (Vence el {formattedExpiration} a las 23:59h Madrid). Aprovecha para reservar tus {currentStudent?.clases_restantes} clases pendientes.
                   </div>
                 </div>
               )}
@@ -1889,7 +1899,7 @@ function ClasesContent() {
                 <span>Saldo de bono disponible:</span>
                 {formattedExpiration && (
                   <p className="text-[10px] text-amber-300/80 mt-0.5">
-                    Válido hasta: <strong>{formattedExpiration}</strong> {daysLeft !== null && `(quedan ${daysLeft}d)`}
+                    Válido hasta: <strong>{formattedExpiration} (23:59h Madrid)</strong> {daysLeft !== null && `(quedan ${daysLeft}d)`}
                   </p>
                 )}
               </div>

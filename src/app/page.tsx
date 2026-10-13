@@ -9,6 +9,7 @@ import { useStudent } from "@/context/StudentContext";
 import StudentBottomNav from "@/components/StudentBottomNav";
 import TeacherPortalView from "@/components/TeacherPortalView";
 import { isPromoSeptiembreBono, calculateBonoExpirationDate } from "@/lib/matriculaService";
+import { getEndOfDayMadrid, calculateBonoDaysRemainingMadrid, isBonoExpiringSoonMadrid } from "@/lib/timezones";
 
 export default function AppHome() {
   const router = useRouter();
@@ -70,20 +71,22 @@ export default function AppHome() {
   // Cálculo y sanación automática de la caducidad del bono (1 mes / 30 días para bonos regulares, 30/09 para promo sep)
   let expirationDate: Date | null = null;
   if (isBono && hasRemainingClasses) {
-    expirationDate = calculateBonoExpirationDate(currentStudent, storedCaducidad);
-    // Sanar y sincronizar localStorage con la fecha oficial no corrupta
-    if (expirationDate && typeof window !== "undefined" && currentStudent?.id) {
-      const expISO = expirationDate.toISOString();
-      if (storedCaducidad !== expISO) {
-        localStorage.setItem(`df_bono_caducidad_${currentStudent.id}`, expISO);
+    const rawExp = calculateBonoExpirationDate(currentStudent, storedCaducidad);
+    if (rawExp) {
+      expirationDate = getEndOfDayMadrid(rawExp);
+      // Sanar y sincronizar localStorage con la fecha oficial no corrupta
+      if (typeof window !== "undefined" && currentStudent?.id) {
+        const expISO = expirationDate.toISOString();
+        if (storedCaducidad !== expISO) {
+          localStorage.setItem(`df_bono_caducidad_${currentStudent.id}`, expISO);
+        }
       }
     }
   }
 
-  const now = new Date();
-  const daysLeft = expirationDate ? Math.ceil((expirationDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : null;
-  const isExpiringSoon = daysLeft !== null && daysLeft <= 7 && daysLeft > 0 && hasRemainingClasses;
-  const isExpired = daysLeft !== null && daysLeft <= 0 && hasRemainingClasses;
+  const daysLeft = expirationDate ? calculateBonoDaysRemainingMadrid(expirationDate) : null;
+  const isExpiringSoon = expirationDate ? (isBonoExpiringSoonMadrid(expirationDate) && hasRemainingClasses) : false;
+  const isExpired = daysLeft !== null && daysLeft < 0 && hasRemainingClasses;
 
   const formattedExpiration = expirationDate ? expirationDate.toLocaleDateString("es-ES", {
     day: "numeric",
@@ -134,7 +137,7 @@ export default function AppHome() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded-full bg-amber-500 text-slate-950">
-                      ¡CADUCA EN {daysLeft} {daysLeft === 1 ? "DÍA" : "DÍAS"}!
+                      {daysLeft === 0 ? "¡CADUCA HOY!" : `¡CADUCA EN ${daysLeft} ${daysLeft === 1 ? "DÍA" : "DÍAS"}!`}
                     </span>
                   </div>
                   <h3 className="text-sm font-bold text-white mt-1">

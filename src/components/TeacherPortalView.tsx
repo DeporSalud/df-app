@@ -44,6 +44,7 @@ import {
   getMadridDayRangeUTC,
   isSameMadridDay
 } from "@/lib/timezones";
+import { studentMatchesSearchQuery } from "@/lib/identityUtils";
 
 const getDayOrder = (day: string) => {
   const days: Record<string, number> = {
@@ -1086,8 +1087,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   // Students in class filtered by search and attendance status (Todos / Presentes / Faltas)
   const filteredRoster = useMemo(() => {
     return roster.filter(s => {
-      const matchesSearch = !rosterSearch.trim() || 
-        (s.nombre_completo || "").toLowerCase().includes(rosterSearch.toLowerCase());
+      const matchesSearch = studentMatchesSearchQuery(s, rosterSearch);
       if (!matchesSearch) return false;
 
       const isPresent = asistenciasRegistradas.includes(s.id);

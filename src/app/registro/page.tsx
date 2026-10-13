@@ -16,7 +16,8 @@ import {
   CheckCircle2,
   MailCheck,
   ExternalLink,
-  Sparkles
+  Sparkles,
+  Info
 } from "lucide-react";
 import { useStudent } from "@/context/StudentContext";
 import OtpVerificationModal from "@/components/OtpVerificationModal";
@@ -188,9 +189,14 @@ export default function RegistroPage() {
 
             {/* 3. Teléfono */}
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-[var(--color-text-title)] uppercase tracking-wider block">
-                Teléfono Móvil <span className="text-[var(--color-danger)]">*</span>
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-[var(--color-text-title)] uppercase tracking-wider block">
+                  Teléfono Móvil <span className="text-[var(--color-danger)]">*</span>
+                </label>
+                <span className="text-[10px] text-slate-400 flex items-center gap-1" title="Teléfono móvil para avisos de clases">
+                  <Info size={11} className="text-[var(--color-primary)]" /> Móvil para avisos
+                </span>
+              </div>
               <div className="relative flex items-center">
                 <Phone className="absolute left-3 w-4 h-4 text-[var(--color-text-secondary)]" />
                 <input
@@ -199,17 +205,26 @@ export default function RegistroPage() {
                   required
                   value={formData.telefono}
                   onChange={handleChange}
-                  placeholder="600 123 456"
+                  placeholder="Ej. 612 34 56 78"
+                  title="Introduce tu número de teléfono móvil para avisos de clases"
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-white text-xs focus:outline-none focus:border-[var(--color-primary)] transition-colors placeholder:text-slate-500"
                 />
               </div>
+              <p className="text-[10px] text-slate-400">
+                Introduce tu número de teléfono móvil para avisos de clases y códigos de acceso.
+              </p>
             </div>
 
             {/* 4. DNI */}
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-[var(--color-text-title)] uppercase tracking-wider block">
-                DNI / NIE
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-[var(--color-text-title)] uppercase tracking-wider block">
+                  DNI / NIE
+                </label>
+                <span className="text-[10px] text-slate-400 flex items-center gap-1" title="DNI o NIE con letra">
+                  <Info size={11} className="text-[var(--color-primary)]" /> Para póliza y seguro
+                </span>
+              </div>
               <div className="relative flex items-center">
                 <CreditCard className="absolute left-3 w-4 h-4 text-[var(--color-text-secondary)]" />
                 <input
@@ -217,10 +232,14 @@ export default function RegistroPage() {
                   name="dni"
                   value={formData.dni}
                   onChange={handleChange}
-                  placeholder="12345678X"
+                  placeholder="Ej. 12345678A"
+                  title="DNI o NIE con letra para la cobertura del seguro escolar"
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-white text-xs focus:outline-none focus:border-[var(--color-primary)] transition-colors placeholder:text-slate-500"
                 />
               </div>
+              <p className="text-[10px] text-slate-400">
+                DNI o NIE con letra (requerido para la cobertura de la póliza y seguro escolar).
+              </p>
             </div>
 
             {/* 5. Fecha de Nacimiento */}

@@ -39,6 +39,13 @@ import {
   deleteAlumnosClasesBySessionDate
 } from "@/lib/openClassService";
 import { publishSyncEvent } from "@/lib/syncEventBus";
+import { 
+  getEndOfDayMadrid, 
+  calculateBonoDaysRemainingMadrid, 
+  isBonoExpiringSoonMadrid, 
+  getBonoStatusBadgeMadrid 
+} from "@/lib/timezones";
+import { calculateBonoExpirationDate } from "@/lib/matriculaService";
 
 export default function MisClasesPage() {
   const router = useRouter();
@@ -205,6 +212,17 @@ export default function MisClasesPage() {
 
   const totalClassesCount = myRegularClasses.length + openClassBookings.length;
 
+  // Cálculo oficial de expiración de bono con corte 23:59:59 Madrid
+  const hasRemainingBonoClasses = typeof currentStudent?.clases_restantes === "number" && currentStudent.clases_restantes > 0;
+  let bonoExpirationDate: Date | null = null;
+  if (hasRemainingBonoClasses) {
+    const rawExp = calculateBonoExpirationDate(currentStudent);
+    if (rawExp) {
+      bonoExpirationDate = getEndOfDayMadrid(rawExp);
+    }
+  }
+  const bonoBadge = bonoExpirationDate ? getBonoStatusBadgeMadrid(bonoExpirationDate) : null;
+
   if (isAuthLoading) return null;
   if (!isAuthenticated) return null;
 
@@ -246,6 +264,11 @@ export default function MisClasesPage() {
                 <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed max-w-xs mx-auto">
                   Explora las sesiones de <strong>Open Class en el calendario</strong> o consulta tus cursos regulares para apuntarte.
                 </p>
+                {hasRemainingBonoClasses && bonoBadge && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-300 font-medium">
+                    🎟️ Tienes <strong>{currentStudent?.clases_restantes} clases en tu bono</strong> ({bonoBadge.statusLabel})
+                  </div>
+                )}
               </div>
 
               <div className="pt-2 flex flex-col gap-2.5">
@@ -276,10 +299,32 @@ export default function MisClasesPage() {
                       <Flame size={14} className="text-amber-400" />
                       <span>Sesiones de Open Class en Calendario ({openClassBookings.length})</span>
                     </h2>
-                    <span className="text-[10px] text-amber-400 font-mono font-bold">
-                      Saldo: {currentStudent?.clases_restantes || 0} clases
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {bonoBadge && (
+                        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                          bonoBadge.isExpired
+                            ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
+                            : bonoBadge.isExpiringSoon
+                            ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                            : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                        }`}>
+                          {bonoBadge.statusLabel}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-amber-400 font-mono font-bold">
+                        Saldo: {currentStudent?.clases_restantes || 0} clases
+                      </span>
+                    </div>
                   </div>
+
+                  {bonoBadge?.isExpiringSoon && (
+                    <div className="p-3 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center gap-2.5 text-xs text-amber-200 mb-1">
+                      <AlertTriangle size={16} className="text-amber-400 shrink-0 animate-pulse" />
+                      <p className="leading-relaxed text-[11px]">
+                        <strong>¡Aviso de Expiración!</strong> Tu bono caduca {bonoBadge.daysRemaining === 0 ? "HOY" : `en ${bonoBadge.daysRemaining} días`} (a las 23:59:59 hora peninsular). ¡Aprovecha tus {currentStudent?.clases_restantes} clases pendientes!
+                      </p>
+                    </div>
+                  )}
 
                   <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-start gap-2.5 text-xs text-amber-200/90 mb-1">
                     <ShieldAlert size={16} className="text-amber-400 shrink-0 mt-0.5" />

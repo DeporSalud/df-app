@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase/client";
 import { sendBonoExpiringEmail } from "@/lib/mailer";
 import { logActivity } from "@/lib/activityLogger";
 import { isPromoSeptiembreBono, calculateBonoExpirationDate } from "@/lib/matriculaService";
+import { getEndOfDayMadrid, calculateBonoDaysRemainingMadrid, isBonoExpiringSoonMadrid } from "@/lib/timezones";
 
 export const dynamic = "force-dynamic";
 
@@ -70,14 +71,13 @@ async function handleExpirationCheck(request: NextRequest) {
       if (!email) continue;
 
       // Calcular fecha de expiración oficial
-      const expDate = calculateBonoExpirationDate(student) || new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const rawExpDate = calculateBonoExpirationDate(student) || new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const expDate = getEndOfDayMadrid(rawExpDate);
+      const daysLeft = calculateBonoDaysRemainingMadrid(expDate);
 
-      const diffMs = expDate.getTime() - now.getTime();
-      const daysLeft = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-      // Si le quedan 7 días o menos y el bono aún no ha expirado del todo
-      const isExpiringSoon = daysLeft <= 7 && daysLeft > 0;
-      const isExpired = daysLeft <= 0;
+      // Si le quedan 7 días o menos y el bono aún no ha expirado del todo (con escudo de octubre)
+      const isExpiringSoon = isBonoExpiringSoonMadrid(expDate);
+      const isExpired = daysLeft < 0;
 
       const fechaCaducidadStr = expDate.toLocaleDateString("es-ES", {
         day: "numeric",

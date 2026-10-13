@@ -593,57 +593,41 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         return { success: true };
       }
 
-      // 3. Creación dinámica de sesión para alumnos nuevos: sincronizar inmediatamente a Supabase
-      const generatedToken = Math.floor(1000 + Math.random() * 9000).toString();
-      let fallbackId = `df_${Date.now()}`;
-      const defaultName = cleanEmail.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, l => l.toUpperCase());
+      // 3. Blindaje contra cuentas fantasma: intentar resolver alumno existente antes de rechazar
+      // Buscar por teléfono (últimos 9 dígitos) o DNI si el input contenía dígitos
+      const digitsOnly = cleanEmail.replace(/\D/g, "");
+      let resolvedStudent: Student | null = null;
 
-      try {
-        const { data: insertedStudent } = await supabase
-          .from("alumnos")
-          .insert([{
-            nombre_completo: defaultName,
-            email: cleanEmail,
-            telefono: "",
-            nfc_token: generatedToken,
-            plan_activo: "Sin Plan Activo",
-            clases_restantes: 0,
-            estado: "Activo",
-            sede: "tejar"
-          }])
-          .select()
-          .maybeSingle();
+      if (digitsOnly.length >= 8) {
+        try {
+          const { data: altMatches } = await supabase
+            .from("alumnos")
+            .select("*, alumnos_clases(*)")
+            .or(`telefono.ilike.%${digitsOnly.slice(-9)}%,dni.ilike.%${digitsOnly}%`)
+            .limit(1);
+          if (altMatches && altMatches.length > 0) {
+            resolvedStudent = altMatches[0];
+          }
+        } catch {}
+      }
 
-        if (insertedStudent && insertedStudent.id) {
-          fallbackId = insertedStudent.id;
+      if (resolvedStudent) {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("df_auth_role", "alumno");
+          localStorage.setItem("df_student_session_id", resolvedStudent.id);
+          localStorage.setItem("df_current_student_data", JSON.stringify(resolvedStudent));
         }
-      } catch (insertErr) {
-        console.warn("No se pudo insertar en Supabase, usando fallback local:", insertErr);
+        setUserRoleState("alumno");
+        setCurrentStudentIdState(resolvedStudent.id);
+        setIsAuthenticated(true);
+        return { success: true };
       }
 
-      const fallbackStudent: Student = {
-        id: fallbackId,
-        nombre_completo: defaultName,
-        email: cleanEmail,
-        telefono: "",
-        nfc_token: generatedToken,
-        plan_activo: "Sin Plan Activo",
-        clases_restantes: 0,
-        estado: "Activo",
-        sede: "tejar"
+      // Si no existe ningún alumno registrado, NO insertar cuentas fantasma "Sin Plan Activo" en Supabase.
+      return {
+        success: false,
+        error: "No se encontró ninguna ficha de alumno registrada con este correo o documento. Por favor, completa tu registro o consulta en recepción."
       };
-
-      setStudents(prev => [fallbackStudent, ...prev]);
-
-      if (typeof window !== "undefined") {
-        localStorage.setItem("df_auth_role", "alumno");
-        localStorage.setItem("df_student_session_id", fallbackId);
-        localStorage.setItem("df_current_student_data", JSON.stringify(fallbackStudent));
-      }
-      setUserRoleState("alumno");
-      setCurrentStudentIdState(fallbackId);
-      setIsAuthenticated(true);
-      return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message || "Error al verificar el código OTP." };
     }
