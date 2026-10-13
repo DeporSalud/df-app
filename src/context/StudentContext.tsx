@@ -397,16 +397,53 @@ export function StudentProvider({ children }: { children: ReactNode }) {
   const registerStudent = async (studentData: RegisterStudentData): Promise<{ success: boolean; error?: string; requiresOtp?: boolean; email?: string }> => {
     try {
       const cleanEmail = studentData.email.trim().toLowerCase();
+      const cleanPhone = studentData.telefono.replace(/\D/g, "").slice(-9);
+      const cleanName = studentData.nombre_completo.trim();
       
-      const { data: existing } = await supabase
-        .from("alumnos")
-        .select("id")
-        .ilike("email", cleanEmail);
-
-      if (existing && existing.length > 0) {
-        return { success: false, error: "Ya existe un alumno registrado con este correo electrónico." };
+      // 1. Comprobar si ya existe un perfil de alumno previo (por email, teléfono o nombre)
+      const orClauses: string[] = [`email.ilike.${cleanEmail}`];
+      if (cleanPhone.length >= 9) {
+        orClauses.push(`telefono.ilike.%${cleanPhone}%`);
+      }
+      if (cleanName.length >= 4) {
+        orClauses.push(`nombre_completo.ilike.%${cleanName}%`);
       }
 
+      const { data: existingList } = await supabase
+        .from("alumnos")
+        .select("*, alumnos_clases(*)")
+        .or(orClauses.join(","));
+
+      if (existingList && existingList.length > 0) {
+        // Priorizar el alumno que ya tenga clases o plan regular asignado
+        const existingStudent = existingList.find(s => 
+          (Array.isArray(s.alumnos_clases) && s.alumnos_clases.length > 0) ||
+          (s.plan_activo && !s.plan_activo.toLowerCase().includes("sin plan"))
+        ) || existingList[0];
+
+        // Actualizar datos de contacto en el perfil oficial
+        await supabase
+          .from("alumnos")
+          .update({
+            email: cleanEmail,
+            telefono: studentData.telefono.trim(),
+            ...(studentData.dni?.trim() ? { dni: studentData.dni.trim().toUpperCase() } : {}),
+            ...(studentData.fecha_nacimiento ? { fecha_nacimiento: studentData.fecha_nacimiento } : {}),
+            estado: "Activo"
+          })
+          .eq("id", existingStudent.id);
+
+        // Generar y enviar OTP para activar este perfil existente
+        await generateAndSendOtp(cleanEmail, existingStudent.nombre_completo);
+
+        return { 
+          success: true, 
+          requiresOtp: true, 
+          email: cleanEmail 
+        };
+      }
+
+      // Si es un alumno nuevo, registrarlo
       const planActivo = studentData.plan_activo || "Sin Plan Activo";
       const remainingClasses = planActivo.includes("Bono 10") ? 10 : planActivo.includes("Bono 4") ? 4 : (planActivo === "Sin Plan Activo" ? 0 : null);
 
@@ -428,7 +465,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
             fecha_nacimiento: studentData.fecha_nacimiento || null,
             plan_activo: planActivo,
             clases_restantes: remainingClasses,
-            estado: "Pendiente"
+            estado: "Activo"
           }
         ])
         .select();
@@ -469,17 +506,23 @@ export function StudentProvider({ children }: { children: ReactNode }) {
           .from("alumnos")
           .update({ estado: "Activo" })
           .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail}`)
-          .select();
+          .select("*, alumnos_clases(*)");
 
         if (updatedList && updatedList.length > 0) {
-          targetStudent = updatedList[0];
+          targetStudent = updatedList.find(s => 
+            (Array.isArray(s.alumnos_clases) && s.alumnos_clases.length > 0) ||
+            (s.plan_activo && !s.plan_activo.toLowerCase().includes("sin plan"))
+          ) || updatedList[0];
         } else {
           const { data: foundList } = await supabase
             .from("alumnos")
-            .select("*")
+            .select("*, alumnos_clases(*)")
             .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail}`);
           if (foundList && foundList.length > 0) {
-            targetStudent = foundList[0];
+            targetStudent = foundList.find(s => 
+              (Array.isArray(s.alumnos_clases) && s.alumnos_clases.length > 0) ||
+              (s.plan_activo && !s.plan_activo.toLowerCase().includes("sin plan"))
+            ) || foundList[0];
           } else {
             // Buscar por nombre o usuario de correo (ej. Olivia, Anna, etc.)
             const username = cleanEmail.split("@")[0].replace(/[._-]/g, " ").trim();
