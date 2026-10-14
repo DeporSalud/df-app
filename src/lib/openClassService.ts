@@ -751,6 +751,14 @@ export async function verificarYSuspenderSesionesBajoAforo(): Promise<{ cancelad
   isAutoSuspensionProcessing = true;
 
   try {
+    // 0. Sincronizar SIEMPRE desde Supabase antes de evaluar el aforo para nunca evaluar sobre un localStorage parcial o desactualizado
+    try {
+      await syncReservasFromSupabase();
+    } catch (syncErr) {
+      console.warn("[verificarYSuspenderSesionesBajoAforo] No se pudo sincronizar con Supabase, abortando evaluación:", syncErr);
+      return { canceladasCount: 0, alumnosReembolsados: [] };
+    }
+
     // Conjunto de sesiones ya suspendidas previamente
     let suspendedSessions: string[] = [];
     try {
@@ -778,36 +786,60 @@ export async function verificarYSuspenderSesionesBajoAforo(): Promise<{ cancelad
 
       if (reservas.length > 0 && reservas.length < OPEN_CLASS_MIN_STUDENTS) {
         const sample = reservas[0];
-        const horasRestantes = getHorasRestantesParaSesion(sample.fecha_iso, sample.hora_inicio);
+        const cleanISO = cleanDateISO(sample.fecha_iso);
+        const normClassId = normalizeClaseId(sample.clase_id);
+        const horasRestantes = getHorasRestantesParaSesion(cleanISO, sample.hora_inicio);
         
         // ÚNICAMENTE sesiones futuras dentro del margen de 5 horas previas (< 5h)
         if (horasRestantes > 0 && horasRestantes < OPEN_CLASS_CUTOFF_HOURS) {
+          // Doble verificación autoritativa directa en Supabase alumnos_clases antes de suspender
+          const { startISO, endISO } = getMadridDayRangeUTC(cleanISO);
+          const literalStart = `${cleanISO}T00:00:00.000Z`;
+          const literalEnd = `${cleanISO}T23:59:59.999Z`;
+          const minBound = startISO < literalStart ? startISO : literalStart;
+          const maxBound = endISO > literalEnd ? endISO : literalEnd;
+
+          const { data: dbSessionRows, error: dbCountErr } = await supabase
+            .from("alumnos_clases")
+            .select("id, alumno_id")
+            .eq("clase_id", normClassId)
+            .gte("asignado_en", minBound)
+            .lte("asignado_en", maxBound);
+
+          // Si hubo error de red o si en Supabase hay >= 4 alumnos reales, JAMÁS suspender la clase
+          if (dbCountErr || !dbSessionRows || dbSessionRows.length >= OPEN_CLASS_MIN_STUDENTS) {
+            continue;
+          }
+
           suspendedSet.add(sessionKey);
 
           for (const r of reservas) {
             r.estado = "Cancelada";
             r.asistido = false;
             updated = true;
-            reembolsados.push(r.alumno_nombre || r.alumno_id);
 
-            // Reembolsar 1 clase en Supabase si tiene saldo de bono y eliminar reserva de alumnos_clases de forma segura
+            // Reembolsar 1 clase en Supabase ÚNICAMENTE si la fila se elimina realmente de alumnos_clases (idempotencia multi-dispositivo)
             try {
-              const { data: st } = await supabase
-                .from("alumnos")
-                .select("id, clases_restantes, plan_activo")
-                .eq("id", r.alumno_id)
-                .maybeSingle();
-
               // Safe deletion in alumnos_clases filtered strictly by session date
-              await deleteAlumnosClasesBySessionDate(r.alumno_id, r.clase_id, sample.fecha_iso);
+              const delResult = await deleteAlumnosClasesBySessionDate(r.alumno_id, r.clase_id, cleanISO);
 
-              if (st && typeof st.clases_restantes === "number") {
-                const planLower = (st.plan_activo || "").toLowerCase();
-                const isUnlimited = planLower.includes("ilimitad");
-                if (!isUnlimited) {
-                  await supabase.from("alumnos").update({
-                    clases_restantes: st.clases_restantes + 1
-                  }).eq("id", st.id);
+              if (delResult.success && delResult.count > 0) {
+                reembolsados.push(r.alumno_nombre || r.alumno_id);
+
+                const { data: st } = await supabase
+                  .from("alumnos")
+                  .select("id, clases_restantes, plan_activo")
+                  .eq("id", r.alumno_id)
+                  .maybeSingle();
+
+                if (st && typeof st.clases_restantes === "number") {
+                  const planLower = (st.plan_activo || "").toLowerCase();
+                  const isUnlimited = planLower.includes("ilimitad");
+                  if (!isUnlimited) {
+                    await supabase.from("alumnos").update({
+                      clases_restantes: st.clases_restantes + 1
+                    }).eq("id", st.id);
+                  }
                 }
               }
             } catch (e) {
