@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { createClient } from "@supabase/supabase-js";
+import { withPaymentFulfillmentLock, computeNewBonoBalance } from "@/lib/paymentFulfillmentLock";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wjnoawmefdurqqjwqdmi.supabase.co";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "sb_publishable_dWudcdKMOeKH22g0IRKV7w_bxWNtEh2";
@@ -51,83 +52,92 @@ export async function POST(req: NextRequest) {
         } = session.metadata || {};
 
         const count = parseInt(clasesCount || "4", 10);
-        const isUnlimited = count >= 999;
 
         const paymentIntentId = typeof session.payment_intent === "string"
           ? session.payment_intent
           : (session.payment_intent as any)?.id;
 
-        // 1. Idempotency Check
-        if (paymentIntentId) {
-          try {
-            const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
-            if (pi.metadata?.processed === "true") {
-              return NextResponse.json({ received: true, alreadyProcessed: true });
-            }
-          } catch (piErr) {
-            console.warn("[Stripe Webhook] Error retrieving PaymentIntent:", piErr);
-          }
-        }
+        const lockKey = `stripe:${paymentIntentId || sessionId}`;
 
-        // 2. Find Student in Supabase
-        let student: any = null;
-        let targetStudentId = studentId;
-
-        if (studentId) {
-          const { data } = await supabase
-            .from("alumnos")
-            .select("id, clases_restantes, plan_activo")
-            .eq("id", studentId)
-            .maybeSingle();
-          student = data;
-        }
-
-        const resolvedEmail = studentEmail || session.customer_details?.email;
-        if (!student && resolvedEmail) {
-          const { data } = await supabase
-            .from("alumnos")
-            .select("id, clases_restantes, plan_activo")
-            .ilike("email", resolvedEmail.trim().toLowerCase())
-            .maybeSingle();
-          student = data;
-          if (student) targetStudentId = student.id;
-        }
-
-        // 3. Update Student Balance
-        if (student && targetStudentId) {
-          const currentBalance = typeof student.clases_restantes === "number" ? student.clases_restantes : 0;
-          const updatedBalance = isUnlimited ? 999 : currentBalance + count;
-
-          const { error: updateErr } = await supabase
-            .from("alumnos")
-            .update({
-              plan_activo: bonoName || "Bono de Clases",
-              clases_restantes: updatedBalance,
-            })
-            .eq("id", targetStudentId);
-
-          if (updateErr) {
-            console.error("[Stripe Webhook] Error updating student in Supabase:", updateErr);
-            return NextResponse.json({ error: updateErr.message }, { status: 500 });
-          }
-
-          // 4. Mark as processed in Stripe
+        const { alreadyFulfilled } = await withPaymentFulfillmentLock(lockKey, async () => {
+          // 1. Idempotency Check
           if (paymentIntentId) {
             try {
-              await stripe.paymentIntents.update(paymentIntentId, {
-                metadata: {
-                  processed: "true",
-                  studentId: targetStudentId || "",
-                  bonoId: bonoId || "",
-                  updatedBalance: String(updatedBalance),
-                },
-              });
-            } catch (stripeErr) {
-              console.warn("[Stripe Webhook] Error updating PaymentIntent metadata:", stripeErr);
+              const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+              if (pi.metadata?.processed === "true") {
+                return { alreadyProcessed: true };
+              }
+            } catch (piErr) {
+              console.warn("[Stripe Webhook] Error retrieving PaymentIntent:", piErr);
             }
           }
 
-          console.log(`[Stripe Webhook] Successfully credited ${count} classes to ${resolvedEmail || targetStudentId}`);
+          // 2. Find Student in Supabase
+          let student: any = null;
+          let targetStudentId = studentId;
+
+          if (studentId) {
+            const { data } = await supabase
+              .from("alumnos")
+              .select("id, clases_restantes, plan_activo, creado_en")
+              .eq("id", studentId)
+              .maybeSingle();
+            student = data;
+          }
+
+          const resolvedEmail = studentEmail || session.customer_details?.email;
+          if (!student && resolvedEmail) {
+            const { data } = await supabase
+              .from("alumnos")
+              .select("id, clases_restantes, plan_activo, creado_en")
+              .ilike("email", resolvedEmail.trim().toLowerCase())
+              .maybeSingle();
+            student = data;
+            if (student) targetStudentId = student.id;
+          }
+
+          // 3. Update Student Balance with expiration-aware calculation
+          if (student && targetStudentId) {
+            const { updatedBalance } = computeNewBonoBalance(student, count);
+            const purchaseNowISO = new Date().toISOString();
+
+            const { error: updateErr } = await supabase
+              .from("alumnos")
+              .update({
+                plan_activo: bonoName || "Bono de Clases",
+                clases_restantes: updatedBalance,
+                creado_en: purchaseNowISO,
+              })
+              .eq("id", targetStudentId);
+
+            if (updateErr) {
+              throw new Error(updateErr.message);
+            }
+
+            // 4. Mark as processed in Stripe
+            if (paymentIntentId) {
+              try {
+                await stripe.paymentIntents.update(paymentIntentId, {
+                  metadata: {
+                    processed: "true",
+                    studentId: targetStudentId || "",
+                    bonoId: bonoId || "",
+                    updatedBalance: String(updatedBalance),
+                  },
+                });
+              } catch (stripeErr) {
+                console.warn("[Stripe Webhook] Error updating PaymentIntent metadata:", stripeErr);
+              }
+            }
+
+            console.log(`[Stripe Webhook] Successfully credited ${count} classes to ${resolvedEmail || targetStudentId}`);
+          }
+
+          return { alreadyProcessed: false };
+        });
+
+        if (alreadyFulfilled) {
+          return NextResponse.json({ received: true, alreadyProcessed: true });
         }
       }
     }

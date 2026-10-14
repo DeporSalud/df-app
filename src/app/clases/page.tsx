@@ -27,7 +27,8 @@ import {
   Smartphone,
   Loader2,
   Lock,
-  AlertTriangle
+  AlertTriangle,
+  Trash2
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase/client";
@@ -42,6 +43,9 @@ import {
   CalendarDayItem, 
   isAlumnoReservadoEnSesion, 
   crearReservaOpenClass,
+  cancelarReservaOpenClass,
+  deleteAlumnosClasesBySessionDate,
+  getReservasAlumno,
   normalizeDay,
   normalizeSede,
   formatSedeName,
@@ -397,15 +401,19 @@ function ClasesContent() {
       return;
     }
 
-    // Check bono balance for Open Class
+    // Check bono balance & expiration for Open Class
     const hasUnlimited = currentStudent.plan_activo?.toLowerCase().includes("ilimitad");
     const remainingClasses = typeof currentStudent.clases_restantes === "number" ? currentStudent.clases_restantes : 0;
+    const rawExp = calculateBonoExpirationDate(currentStudent);
+    const isBonoExpired = Boolean(rawExp && Date.now() > getEndOfDayMadrid(rawExp).getTime());
 
-    if (!hasUnlimited && remainingClasses <= 0) {
+    if (!hasUnlimited && (remainingClasses <= 0 || isBonoExpired)) {
       setModal({
         isOpen: true,
-        title: "Bono de Open Class Requerido",
-        message: `Para reservar una Open Class en el calendario necesitas saldo de bono disponible (tienes ${remainingClasses} clases restantes).\n\nPuedes adquirir un bono de clases ahora mismo y reservar al instante.`,
+        title: isBonoExpired ? "Bono Caducado" : "Bono de Open Class Requerido",
+        message: isBonoExpired
+          ? "Tu bono de Open Class ha caducado (corte 23:59:59 hora de España). Adquiere un nuevo bono para seguir reservando tus clases."
+          : `Para reservar una Open Class en el calendario necesitas saldo de bono disponible (tienes ${remainingClasses} clases restantes).\n\nPuedes adquirir un bono de clases ahora mismo y reservar al instante.`,
         type: "warning",
         confirmText: "Comprar Bono",
         onConfirm: () => setActiveTab("bonos")
@@ -418,6 +426,105 @@ function ClasesContent() {
       isOpen: true,
       clase,
       calendarDay: selectedCalendarDay
+    });
+  };
+
+  const handleCancelReservationFromCalendar = (clase: any, calendarDay: CalendarDayItem) => {
+    if (!currentStudent?.id) return;
+    const hoursLeft = getHorasRestantesParaSesion(calendarDay.dateISO, clase.hora_inicio);
+    if (hoursLeft < 5) {
+      setModal({
+        isOpen: true,
+        title: "Cancelación No Permitida",
+        message: hoursLeft <= 0
+          ? "La sesión ya ha comenzado o finalizado."
+          : "No es posible cancelar con menos de 5 horas de antelación (Regla de las 5h). Esta clase queda computada en tu bono.",
+        type: "warning",
+        confirmText: "Entendido"
+      });
+      return;
+    }
+
+    setModal({
+      isOpen: true,
+      title: "¿Cancelar Reserva?",
+      message: `¿Estás seguro de que deseas cancelar tu reserva para "${clase.nombre_clase}" el ${calendarDay.dayName.toLowerCase()} ${calendarDay.dayNumber} de ${calendarDay.monthName} a las ${clase.hora_inicio}h?\n\nAl cancelar con al menos 5 horas de antelación, se reembolsará automáticamente 1 clase a tu saldo de bono.`,
+      type: "warning",
+      showCancel: true,
+      confirmText: "Sí, Cancelar Reserva",
+      onConfirm: async () => {
+        if (bookingMutexRef.current) return;
+        bookingMutexRef.current = true;
+        try {
+          const recheckHours = getHorasRestantesParaSesion(calendarDay.dateISO, clase.hora_inicio);
+          if (recheckHours < 5) {
+            throw new Error("No es posible cancelar con menos de 5 horas de antelación.");
+          }
+
+          const classUUID = normalizeClaseId(clase.id);
+          const cleanDate = calendarDay.dateISO.trim().slice(0, 10);
+          const delResult = await deleteAlumnosClasesBySessionDate(currentStudent.id, classUUID, cleanDate);
+
+          const myBookings = getReservasAlumno(currentStudent.id);
+          const targetLocal = myBookings.find(
+            r => normalizeClaseId(r.clase_id) === classUUID && r.fecha_iso.trim().slice(0, 10) === cleanDate
+          );
+          if (targetLocal) {
+            cancelarReservaOpenClass(targetLocal.id);
+          }
+
+          if (delResult.success && delResult.count > 0) {
+            const hasUnlimited = currentStudent.plan_activo?.toLowerCase().includes("ilimitad");
+            if (!hasUnlimited) {
+              const { data: freshDbStudent } = await supabase
+                .from("alumnos")
+                .select("clases_restantes")
+                .eq("id", currentStudent.id)
+                .single();
+
+              const actualDbBalance = typeof freshDbStudent?.clases_restantes === "number"
+                ? freshDbStudent.clases_restantes
+                : (typeof currentStudent.clases_restantes === "number" ? currentStudent.clases_restantes : 0);
+
+              await supabase
+                .from("alumnos")
+                .update({ clases_restantes: actualDbBalance + 1 })
+                .eq("id", currentStudent.id);
+
+              if (refetchStudents) await refetchStudents();
+            }
+
+            logActivity({
+              origen: "alumno",
+              tipo_evento: "reserva_bono",
+              descripcion: `Cancelación de reserva de Open Class (${cleanDate}): "${clase.nombre_clase}" (Reembolso +1 clase)`,
+              usuario_afectado: currentStudent.nombre_completo,
+              sede: formatSedeName(clase.sede)
+            });
+          }
+
+          await syncReservasFromSupabase();
+          publishSyncEvent("df_reservas_updated");
+          setReservasTick(prev => prev + 1);
+
+          setModal({
+            isOpen: true,
+            title: "✓ Reserva Cancelada",
+            message: `Has cancelado tu reserva para "${clase.nombre_clase}". Se ha devuelto 1 clase a tu saldo de bono.`,
+            type: "success",
+            confirmText: "Entendido"
+          });
+        } catch (err: any) {
+          setModal({
+            isOpen: true,
+            title: "No se pudo cancelar",
+            message: err.message || "Error al cancelar la reserva.",
+            type: "warning"
+          });
+        } finally {
+          bookingMutexRef.current = false;
+        }
+      }
     });
   };
 
@@ -440,7 +547,12 @@ function ClasesContent() {
     const currentBalance = typeof currentStudent.clases_restantes === "number" ? currentStudent.clases_restantes : 0;
 
     try {
-      // 2. Pre-check: Bono Balance
+      // 2. Pre-check: Bono Balance & Expiration
+      const rawExp = calculateBonoExpirationDate(currentStudent);
+      const isBonoExpired = Boolean(rawExp && Date.now() > getEndOfDayMadrid(rawExp).getTime());
+      if (!hasUnlimited && isBonoExpired) {
+        throw new Error("Tu bono de Open Class ha caducado. Adquiere un nuevo bono para poder reservar.");
+      }
       if (!hasUnlimited && currentBalance <= 0) {
         throw new Error(`No dispones de clases restantes en tu bono (${currentBalance}). Adquiere un nuevo bono para reservar.`);
       }
@@ -1371,10 +1483,22 @@ function ClasesContent() {
                             <span>Inscripción en Recepción (No reservable en app)</span>
                           </span>
                         ) : isReservedForThisDate ? (
-                          <span className="text-xs font-bold text-emerald-400 bg-emerald-500/15 px-3.5 py-1.5 rounded-xl border border-emerald-500/30 flex items-center gap-1.5">
-                            <CheckCircle2 size={15} />
-                            <span>Plaza Reservada</span>
-                          </span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold text-emerald-400 bg-emerald-500/15 px-3.5 py-1.5 rounded-xl border border-emerald-500/30 flex items-center gap-1.5">
+                              <CheckCircle2 size={15} />
+                              <span>Plaza Reservada</span>
+                            </span>
+                            {getHorasRestantesParaSesion(selectedCalendarDay.dateISO, clase.hora_inicio) >= 5 && (
+                              <button
+                                type="button"
+                                onClick={() => handleCancelReservationFromCalendar(clase, selectedCalendarDay)}
+                                className="text-[11px] font-bold text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-1.5 rounded-xl border border-rose-500/25 transition-all flex items-center gap-1 cursor-pointer"
+                              >
+                                <Trash2 size={13} />
+                                <span>Cancelar</span>
+                              </button>
+                            )}
+                          </div>
                         ) : sessionStatus.status === "suspendida_aforo_minimo" ? (
                           <span className="text-xs font-bold text-rose-400 bg-rose-500/15 px-3.5 py-1.5 rounded-xl border border-rose-500/30 flex items-center gap-1.5 shadow-sm" title={sessionStatus.motivoBloqueo}>
                             <AlertCircle size={15} className="shrink-0" />

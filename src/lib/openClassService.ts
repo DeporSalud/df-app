@@ -472,7 +472,7 @@ export function crearReservaOpenClass(data: {
 
   const dayCap = data.calendarDay.dayName.charAt(0) + data.calendarDay.dayName.slice(1).toLowerCase();
   const nueva: OpenClassReserva = {
-    id: "res_" + Date.now() + "_" + Math.floor(Math.random() * 10000),
+    id: `res_sb_${data.alumno_id}_${classUUID}_${cleanISO}`,
     alumno_id: data.alumno_id,
     alumno_nombre: data.alumno_nombre,
     alumno_email: data.alumno_email,
@@ -883,11 +883,11 @@ export function isReservaCancelable(reserva: { fecha_iso?: string; hora_inicio?:
     };
   }
 
-  if (horasRestantes <= 24) {
+  if (horasRestantes < OPEN_CLASS_CUTOFF_HOURS) {
     return {
       cancelable: false,
       horasRestantes,
-      motivo: "Faltan menos de 24 horas para el inicio de la clase. Según la normativa oficial, no es cancelable y la sesión se computa de tu bono."
+      motivo: `Faltan menos de ${OPEN_CLASS_CUTOFF_HOURS} horas para el inicio de la clase. Según la normativa oficial, no es cancelable y la sesión se computa de tu bono.`
     };
   }
 
@@ -904,11 +904,11 @@ export function cancelarReservaOpenClass(reservaId: string, options?: { allowUnd
     return false;
   }
 
-  // Reject cancellation if within 24 hours unless explicitly allowed (admin bypass)
+  // Reject cancellation if within 5 hours unless explicitly allowed (admin bypass)
   if (!options?.allowUnder24h) {
     const { cancelable, motivo } = isReservaCancelable(target);
     if (!cancelable) {
-      console.warn("Cancelación bloqueada por normativa de 24h:", motivo);
+      console.warn("Cancelación bloqueada por normativa de 5h:", motivo);
       return false;
     }
   }
@@ -1097,7 +1097,8 @@ export async function syncReservasFromSupabase(): Promise<OpenClassReserva[]> {
       });
     }
 
-    // Merge with current local reservations
+    // Authoritative sync: dbMappedReservas is the single source of truth for active reservations.
+    // Never resurrect local 'Confirmada' reservations that no longer exist in Supabase alumnos_clases.
     const local = getOpenClassReservas();
     const merged: OpenClassReserva[] = [...dbMappedReservas];
 
@@ -1114,14 +1115,11 @@ export async function syncReservasFromSupabase(): Promise<OpenClassReserva[]> {
           merged[matchIndex].asistido = true;
           merged[matchIndex].estado = "Asistida";
         }
-      } else {
-        // Only keep local reservations that do not originate from Supabase (res_sb_)
-        if (!l.id.startsWith("res_sb_")) {
-          merged.push({
-            ...l,
-            clase_id: normLocalClassId
-          });
-        }
+      } else if (l.estado === "Cancelada") {
+        merged.push({
+          ...l,
+          clase_id: normLocalClassId
+        });
       }
     }
 

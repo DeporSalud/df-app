@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { 
   QrCode, 
   Calendar, 
@@ -55,6 +55,7 @@ export default function MisClasesPage() {
   const [openClassBookings, setOpenClassBookings] = useState<OpenClassReserva[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [modal, setModal] = useState<ModalState>({ isOpen: false, message: "" });
+  const cancelMutexRef = useRef(false);
 
   useEffect(() => {
     if (!isAuthLoading && !isAuthenticated) {
@@ -115,7 +116,7 @@ export default function MisClasesPage() {
       setModal({
         isOpen: true,
         title: "Cancelación No Permitida",
-        message: status.motivo || "No es posible cancelar reservas con menos de 24 horas de antelación. Esta clase queda computada en tu bono.",
+        message: status.motivo || "No es posible cancelar reservas con menos de 5 horas de antelación. Esta clase queda computada en tu bono.",
         type: "warning",
         confirmText: "Entendido"
       });
@@ -125,7 +126,7 @@ export default function MisClasesPage() {
     setModal({
       isOpen: true,
       title: "¿Cancelar Reserva?",
-      message: `¿Estás seguro de que deseas cancelar tu reserva para la sesión de "${reserva.nombre_clase}" del ${reserva.fecha_formateada}?\n\nAl cancelar con más de 24 horas de antelación, se reembolsará automáticamente 1 clase a tu saldo de bono.`,
+      message: `¿Estás seguro de que deseas cancelar tu reserva para la sesión de "${reserva.nombre_clase}" del ${reserva.fecha_formateada}?\n\nAl cancelar con al menos 5 horas de antelación, se reembolsará automáticamente 1 clase a tu saldo de bono.`,
       type: "warning",
       showCancel: true,
       confirmText: "Sí, Cancelar Reserva",
@@ -135,79 +136,83 @@ export default function MisClasesPage() {
 
   const executeCancelarReservaOpenClass = async (reserva: OpenClassReserva) => {
     if (!currentStudent?.id) return;
+    if (cancelMutexRef.current) return;
+    cancelMutexRef.current = true;
 
-    // Strict 24-hour validation
-    const status = isReservaCancelable(reserva);
-    if (!status.cancelable) {
-      setModal({
-        isOpen: true,
-        title: "Cancelación No Permitida",
-        message: status.motivo || "No es posible cancelar reservas con menos de 24 horas de antelación.",
-        type: "warning",
-        confirmText: "Entendido"
-      });
-      return;
-    }
-
-    // 1. Cancel in service (returns false if already cancelled or < 24h)
-    const didCancel = cancelarReservaOpenClass(reserva.id);
-    if (!didCancel) {
-      loadAllBookings();
-      return;
-    }
-
-    // 2. Refund 1 class to student's bono
-    const hasUnlimited = currentStudent.plan_activo?.toLowerCase().includes("ilimitad");
-    if (!hasUnlimited) {
-      // ALWAYS fetch FRESH balance directly from Supabase before refunding
-      const { data: freshDbStudent } = await supabase
-        .from("alumnos")
-        .select("clases_restantes")
-        .eq("id", currentStudent.id)
-        .single();
-
-      const actualDbBalance = typeof freshDbStudent?.clases_restantes === "number"
-        ? freshDbStudent.clases_restantes
-        : (typeof currentStudent.clases_restantes === "number" ? currentStudent.clases_restantes : 0);
-
-      const updatedBalance = actualDbBalance + 1;
-      await supabase.from("alumnos").update({ clases_restantes: updatedBalance }).eq("id", currentStudent.id);
-      if (refetchStudents) await refetchStudents();
-    }
-
-    // 3. Delete specific session enrollment from alumnos_clases in Supabase safely
     try {
+      // Strict 5-hour validation
+      const status = isReservaCancelable(reserva);
+      if (!status.cancelable) {
+        setModal({
+          isOpen: true,
+          title: "Cancelación No Permitida",
+          message: status.motivo || "No es posible cancelar reservas con menos de 5 horas de antelación.",
+          type: "warning",
+          confirmText: "Entendido"
+        });
+        return;
+      }
+
+      // 1. Delete specific session enrollment from alumnos_clases in Supabase FIRST and verify count > 0
+      let deletedInDb = false;
       if (reserva.clase_id && currentStudent.id && reserva.fecha_iso) {
-        await deleteAlumnosClasesBySessionDate(
+        const delResult = await deleteAlumnosClasesBySessionDate(
           currentStudent.id,
           reserva.clase_id,
           reserva.fecha_iso
         );
+        deletedInDb = Boolean(delResult.success && delResult.count > 0);
       }
-    } catch (e) {
-      console.warn("Could not delete from alumnos_clases:", e);
+
+      // 2. Mark cancelled in local cache
+      cancelarReservaOpenClass(reserva.id);
+
+      if (!deletedInDb) {
+        await loadAllBookings();
+        return;
+      }
+
+      // 3. Refund 1 class to student's bono ONLY if Supabase confirmed row deletion (count > 0)
+      const hasUnlimited = currentStudent.plan_activo?.toLowerCase().includes("ilimitad");
+      if (!hasUnlimited) {
+        const { data: freshDbStudent } = await supabase
+          .from("alumnos")
+          .select("clases_restantes")
+          .eq("id", currentStudent.id)
+          .single();
+
+        const actualDbBalance = typeof freshDbStudent?.clases_restantes === "number"
+          ? freshDbStudent.clases_restantes
+          : (typeof currentStudent.clases_restantes === "number" ? currentStudent.clases_restantes : 0);
+
+        const updatedBalance = actualDbBalance + 1;
+        await supabase.from("alumnos").update({ clases_restantes: updatedBalance }).eq("id", currentStudent.id);
+        if (refetchStudents) await refetchStudents();
+      }
+
+      publishSyncEvent("df_reservas_updated");
+
+      // Audit Log
+      logActivity({
+        origen: "alumno",
+        tipo_evento: "reserva_bono",
+        descripcion: `Cancelación de reserva de Open Class para el ${reserva.fecha_formateada}: "${reserva.nombre_clase}" (Se reembolsa 1 clase al bono)`,
+        usuario_afectado: currentStudent.nombre_completo,
+        sede: formatSedeName(reserva.sede)
+      });
+
+      setModal({
+        isOpen: true,
+        title: "✓ Reserva Cancelada",
+        message: `Has cancelado tu reserva para la sesión de "${reserva.nombre_clase}" del ${reserva.fecha_formateada}.\n\nSe ha devuelto 1 clase a tu saldo de bono.`,
+        type: "success",
+        confirmText: "Entendido"
+      });
+
+      await loadAllBookings();
+    } finally {
+      cancelMutexRef.current = false;
     }
-
-    publishSyncEvent("df_reservas_updated");
-
-    // Audit Log
-    logActivity({
-      origen: "alumno",
-      tipo_evento: "reserva_bono",
-      descripcion: `Cancelación de reserva de Open Class para el ${reserva.fecha_formateada}: "${reserva.nombre_clase}" (Se reembolsa 1 clase al bono)`,
-      usuario_afectado: currentStudent.nombre_completo,
-      sede: formatSedeName(reserva.sede)
-    });
-
-    setModal({
-      isOpen: true,
-      title: "✓ Reserva Cancelada",
-      message: `Has cancelado tu reserva para la sesión de "${reserva.nombre_clase}" del ${reserva.fecha_formateada}.\n\nSe ha devuelto 1 clase a tu saldo de bono.`,
-      type: "success",
-      confirmText: "Entendido"
-    });
-
-    loadAllBookings();
   };
 
   const totalClassesCount = myRegularClasses.length + openClassBookings.length;
@@ -329,7 +334,7 @@ export default function MisClasesPage() {
                   <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-start gap-2.5 text-xs text-amber-200/90 mb-1">
                     <ShieldAlert size={16} className="text-amber-400 shrink-0 mt-0.5" />
                     <p className="leading-relaxed text-[11px]">
-                      <strong>Política de Cancelación Oficial:</strong> Las reservas solo pueden cancelarse con <strong>más de 24 horas de antelación</strong> para recuperar la clase. Si faltan 24 horas o menos, la plaza queda bloqueada y la clase se computa de tu bono.
+                      <strong>Política de Cancelación Oficial:</strong> Las reservas solo pueden cancelarse con <strong>al menos 5 horas de antelación</strong> para recuperar la clase. Si faltan menos de 5 horas, la plaza queda bloqueada y la clase se computa de tu bono.
                     </p>
                   </div>
 
@@ -382,7 +387,7 @@ export default function MisClasesPage() {
                             </span>
                           </div>
 
-                          {/* Acción de Cancelación o Aviso de 24h */}
+                          {/* Acción de Cancelación o Aviso de 5h */}
                           {cancelable ? (
                             <div className="flex justify-end pt-1">
                               <button
@@ -400,7 +405,7 @@ export default function MisClasesPage() {
                                 <span className="text-[11px]">
                                   {isPast 
                                     ? "Sesión finalizada o en curso" 
-                                    : "Plazo de cancelación cerrado (menos de 24h)"}
+                                    : "Plazo de cancelación cerrado (menos de 5h)"}
                                 </span>
                               </div>
                               <span className="text-[10px] font-mono font-semibold text-slate-300 bg-slate-800/90 px-2.5 py-1 rounded-lg border border-slate-700 inline-flex items-center gap-1 self-start sm:self-auto">

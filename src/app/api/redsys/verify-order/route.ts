@@ -8,6 +8,7 @@ import {
   normalizeBase64,
 } from "@/lib/redsys";
 import { isPromoSeptiembreBono, getCurrentSeason, addOneCalendarMonthMadrid } from "@/lib/matriculaService";
+import { withPaymentFulfillmentLock, computeNewBonoBalance } from "@/lib/paymentFulfillmentLock";
 
 const supabaseUrl =
   process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wjnoawmefdurqqjwqdmi.supabase.co";
@@ -59,7 +60,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    let calculatedCaducidad: string = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    let calculatedCaducidad: string = addOneCalendarMonthMadrid(new Date()).toISOString();
 
     // 2. Si el webhook aún no llegó pero el navegador trajo los parámetros firmados por CaixaBank:
     if (!pagoData && merchantParamsB64 && receivedSignature && order) {
@@ -73,93 +74,94 @@ export async function GET(req: NextRequest) {
         if (verification.isValid) {
           const params = verification.params || decodeMerchantParameters(merchantParamsB64);
           if (isRedsysResponseApproved(params.Ds_Response)) {
-            let metadata: any = {};
-            if (params.Ds_MerchantData) {
-              try {
-                const raw = decodeURIComponent(params.Ds_MerchantData);
-                metadata = raw.startsWith("{")
-                  ? JSON.parse(raw)
-                  : JSON.parse(Buffer.from(normalizeBase64(raw), "base64").toString("utf8"));
-              } catch (e) {}
-            }
-
-            const bonoName = metadata.bonoName || "Bono de Clases";
-            const clasesCount = parseInt(metadata.clasesCount || "4", 10);
-            const amountCents = parseInt(params.Ds_Amount || "0", 10);
-            const amountEuros = (amountCents / 100).toFixed(2);
-            const authCode = params.Ds_AuthorisationCode || "";
-
-            let studentToUpdate: any = null;
-            let targetUUID = metadata.studentId;
-
-            if (metadata.studentId && isValidUUID(metadata.studentId)) {
-              const { data } = await supabase.from("alumnos").select("*").eq("id", metadata.studentId).maybeSingle();
-              studentToUpdate = data;
-            }
-            if (!studentToUpdate && (metadata.studentEmail || studentEmail)) {
-              const emailToUse = (metadata.studentEmail || studentEmail).trim().toLowerCase();
-              const { data } = await supabase.from("alumnos").select("*").ilike("email", emailToUse).maybeSingle();
-              studentToUpdate = data;
-              if (studentToUpdate) targetUUID = studentToUpdate.id;
-            }
-
-            const isPromo = isPromoSeptiembreBono(metadata.bonoId) || metadata.isPromo === "true";
-            const expISO = isPromo ? "2026-09-30T23:59:59.000Z" : addOneCalendarMonthMadrid(new Date()).toISOString();
-            calculatedCaducidad = expISO;
-
-            if (studentToUpdate && targetUUID) {
-              const curBal = typeof studentToUpdate.clases_restantes === "number" ? studentToUpdate.clases_restantes : 0;
-              const newBal = clasesCount >= 999 ? 999 : curBal + clasesCount;
-              const purchaseNowISO = new Date().toISOString();
-              const updatePayload: Record<string, any> = {
-                clases_restantes: newBal,
-                plan_activo: bonoName,
-                creado_en: purchaseNowISO,
-              };
-
-              const chargeMatricula = metadata.isFirstBono === "true" || parseFloat(metadata.matriculaCost || "0") > 0;
-              if (chargeMatricula) {
-                updatePayload.matricula_pagada = true;
-                updatePayload.matricula_fecha = purchaseNowISO;
-                updatePayload.temporada_matricula = getCurrentSeason();
+            await withPaymentFulfillmentLock(`redsys:${order}`, async () => {
+              let metadata: any = {};
+              if (params.Ds_MerchantData) {
+                try {
+                  const raw = decodeURIComponent(params.Ds_MerchantData);
+                  metadata = raw.startsWith("{")
+                    ? JSON.parse(raw)
+                    : JSON.parse(Buffer.from(normalizeBase64(raw), "base64").toString("utf8"));
+                } catch (e) {}
               }
 
-              let { error: updateErr } = await supabase
-                .from("alumnos")
-                .update(updatePayload)
-                .eq("id", targetUUID);
+              const bonoName = metadata.bonoName || "Bono de Clases";
+              const clasesCount = parseInt(metadata.clasesCount || "4", 10);
+              const amountCents = parseInt(params.Ds_Amount || "0", 10);
+              const amountEuros = (amountCents / 100).toFixed(2);
+              const authCode = params.Ds_AuthorisationCode || "";
 
-              if (updateErr && (updateErr.code === "42703" || updateErr.message?.includes("matricula"))) {
-                console.warn("[Redsys Verify] Falling back to standard columns without matricula:", updateErr.message);
-                await supabase.from("alumnos").update({
+              let studentToUpdate: any = null;
+              let targetUUID = metadata.studentId;
+
+              if (metadata.studentId && isValidUUID(metadata.studentId)) {
+                const { data } = await supabase.from("alumnos").select("*").eq("id", metadata.studentId).maybeSingle();
+                studentToUpdate = data;
+              }
+              if (!studentToUpdate && (metadata.studentEmail || studentEmail)) {
+                const emailToUse = (metadata.studentEmail || studentEmail).trim().toLowerCase();
+                const { data } = await supabase.from("alumnos").select("*").ilike("email", emailToUse).maybeSingle();
+                studentToUpdate = data;
+                if (studentToUpdate) targetUUID = studentToUpdate.id;
+              }
+
+              const isPromo = isPromoSeptiembreBono(metadata.bonoId) || metadata.isPromo === "true";
+              const expISO = isPromo ? "2026-09-30T23:59:59.000Z" : addOneCalendarMonthMadrid(new Date()).toISOString();
+              calculatedCaducidad = expISO;
+
+              if (studentToUpdate && targetUUID) {
+                const { updatedBalance: newBal } = computeNewBonoBalance(studentToUpdate, clasesCount);
+                const purchaseNowISO = new Date().toISOString();
+                const updatePayload: Record<string, any> = {
                   clases_restantes: newBal,
                   plan_activo: bonoName,
                   creado_en: purchaseNowISO,
-                }).eq("id", targetUUID);
+                };
+
+                const chargeMatricula = metadata.isFirstBono === "true" || parseFloat(metadata.matriculaCost || "0") > 0;
+                if (chargeMatricula) {
+                  updatePayload.matricula_pagada = true;
+                  updatePayload.matricula_fecha = purchaseNowISO;
+                  updatePayload.temporada_matricula = getCurrentSeason();
+                }
+
+                let { error: updateErr } = await supabase
+                  .from("alumnos")
+                  .update(updatePayload)
+                  .eq("id", targetUUID);
+
+                if (updateErr && (updateErr.code === "42703" || updateErr.message?.includes("matricula"))) {
+                  console.warn("[Redsys Verify] Falling back to standard columns without matricula:", updateErr.message);
+                  await supabase.from("alumnos").update({
+                    clases_restantes: newBal,
+                    plan_activo: bonoName,
+                    creado_en: purchaseNowISO,
+                  }).eq("id", targetUUID);
+                }
               }
-            }
 
-            const validStudentId = isValidUUID(targetUUID) ? targetUUID : null;
-            try {
-              const { data: newPago } = await supabase.from("pagos").insert([{
-                numero_recibo: `TPV-${order}`,
-                fecha_hora: new Date().toISOString(),
-                alumno_id: validStudentId,
-                alumno_nombre: studentToUpdate?.nombre_completo || metadata.studentName || "Alumno Online",
-                concepto: `${bonoName} (TPV CaixaBank)`,
-                categoria: "bono",
-                importe: parseFloat(amountEuros),
-                metodo_pago: "TPV",
-                sede: "castilla",
-                atendido_por: "TPV Virtual Redsys (Retorno)",
-                notas: `Aut: ${authCode} | Pedido: ${order}`,
-                estado: "Cobrado",
-              }]).select().maybeSingle();
+              const validStudentId = isValidUUID(targetUUID) ? targetUUID : null;
+              try {
+                const { data: newPago } = await supabase.from("pagos").insert([{
+                  numero_recibo: `TPV-${order}`,
+                  fecha_hora: new Date().toISOString(),
+                  alumno_id: validStudentId,
+                  alumno_nombre: studentToUpdate?.nombre_completo || metadata.studentName || "Alumno Online",
+                  concepto: `${bonoName} (TPV CaixaBank)`,
+                  categoria: "bono",
+                  importe: parseFloat(amountEuros),
+                  metodo_pago: "TPV",
+                  sede: "castilla",
+                  atendido_por: "TPV Virtual Redsys (Retorno)",
+                  notas: `Aut: ${authCode} | Pedido: ${order}`,
+                  estado: "Cobrado",
+                }]).select().maybeSingle();
 
-              pagoData = newPago;
-            } catch (pagoErr) {
-              console.warn("[Redsys Verify Order] Pagos table insert skipped:", pagoErr);
-            }
+                pagoData = newPago;
+              } catch (pagoErr) {
+                console.warn("[Redsys Verify Order] Pagos table insert skipped:", pagoErr);
+              }
+            });
           }
         }
       } catch (browserVerifyErr) {

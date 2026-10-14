@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { generateAndSendOtp, verifyOtpCode, clearActiveOtp } from "@/lib/otpService";
 import { isRegularClassStudent, hasPaidSeasonMatricula } from "@/lib/matriculaService";
@@ -22,6 +23,8 @@ export interface Student {
   matricula_pagada?: boolean;
   matricula_fecha?: string;
   bono_caducidad?: string;
+  creado_en?: string;
+  cuota_mensual?: string;
   es_regular?: boolean;
   alumnos_clases_ids?: string[];
 }
@@ -147,6 +150,7 @@ const INITIAL_STUDENTS: Student[] = FALLBACK_STUDENTS.map(s => ({
 const StudentContext = createContext<StudentContextType | undefined>(undefined);
 
 export function StudentProvider({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const [userRole, setUserRoleState] = useState<UserRole>("alumno");
   const [students, setStudents] = useState<Student[]>(INITIAL_STUDENTS);
   const [currentStudentId, setCurrentStudentIdState] = useState<string>(() => {
@@ -233,7 +237,13 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         const savedSessionId = typeof window !== "undefined" ? localStorage.getItem("df_student_session_id") : null;
         if (savedSessionId) {
           const found = enriched.find(s => s.id === savedSessionId || s.email?.toLowerCase() === savedSessionId?.toLowerCase());
-          if (found) setCurrentStudentIdState(found.id);
+          if (found) {
+            setCurrentStudentIdState(found.id);
+            if (typeof window !== "undefined") {
+              localStorage.setItem("df_current_student_data", JSON.stringify(found));
+              localStorage.setItem("df_student_session", JSON.stringify(found));
+            }
+          }
         }
 
         const savedTeacherId = typeof window !== "undefined" ? localStorage.getItem("df_teacher_session_id") : null;
@@ -280,7 +290,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
     let lastRefetch = Date.now();
     const handleVisibilityOrFocus = () => {
       const now = Date.now();
-      if (now - lastRefetch < 60000) return; // Máximo 1 refetch por minuto para no saturar Supabase
+      if (now - lastRefetch < 1000) return; // Refetch instantáneo al volver de segundo plano (throttle 1s)
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
         lastRefetch = now;
         fetchStudents();
@@ -297,6 +307,13 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       }
     };
   }, []);
+
+  // Refrescar sesión del alumno desde Supabase al cambiar de pantalla (/clases, /mis-clases, /perfil, /recargar, /ventajas)
+  useEffect(() => {
+    if (pathname) {
+      fetchStudents();
+    }
+  }, [pathname]);
 
   // Real-time cross-device sync reactivity (R7.1 & R7.2)
   useEffect(() => {
@@ -651,6 +668,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem("df_teacher_session_id");
       localStorage.removeItem("df_auth_role");
       localStorage.removeItem("df_current_student_data");
+      localStorage.removeItem("df_student_session");
     }
   };
 
