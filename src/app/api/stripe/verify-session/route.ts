@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { createClient } from "@supabase/supabase-js";
-import { isPromoSeptiembreBono, getCurrentSeason } from "@/lib/matriculaService";
+import { isPromoSeptiembreBono, getCurrentSeason, addOneCalendarMonthMadrid } from "@/lib/matriculaService";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wjnoawmefdurqqjwqdmi.supabase.co";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "sb_publishable_dWudcdKMOeKH22g0IRKV7w_bxWNtEh2";
@@ -138,15 +138,17 @@ export async function POST(req: NextRequest) {
       updatedBalance = isUnlimited ? 999 : currentBalance + count;
 
       // Update in Supabase with matricula tracking and graceful fallback
+      const purchaseNowISO = new Date().toISOString();
       const updatePayload: Record<string, any> = {
         plan_activo: bonoName || "Bono de Clases",
         clases_restantes: updatedBalance,
+        creado_en: purchaseNowISO,
       };
 
       const chargeMatricula = isFirstBono === "true" || parseFloat(session.metadata?.matriculaCost || "0") > 0;
       if (chargeMatricula) {
         updatePayload.matricula_pagada = true;
-        updatePayload.matricula_fecha = new Date().toISOString();
+        updatePayload.matricula_fecha = purchaseNowISO;
         updatePayload.temporada_matricula = getCurrentSeason();
       }
 
@@ -162,6 +164,7 @@ export async function POST(req: NextRequest) {
           .update({
             plan_activo: bonoName || "Bono de Clases",
             clases_restantes: updatedBalance,
+            creado_en: purchaseNowISO,
           })
           .eq("id", targetStudentId);
         updateErr = fallbackRes.error;
@@ -200,7 +203,7 @@ export async function POST(req: NextRequest) {
       updatedBalance,
       bonoCaducidad: (isPromoSeptiembreBono(bonoId) || isPromoSeptiembreBono(bonoName) || session.metadata?.isPromoSeptiembre === "true")
         ? "2026-09-30T23:59:59.000Z"
-        : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        : addOneCalendarMonthMadrid(new Date()).toISOString(),
       totalAmount: totalAmount || "0.00",
       customerEmail: session.customer_details?.email || studentEmail,
       receiptUrl: (session as any).receipt_url || null,

@@ -7,7 +7,7 @@ import {
   normalizeBase64,
 } from "@/lib/redsys";
 import { createClient } from "@supabase/supabase-js";
-import { isPromoSeptiembreBono } from "@/lib/matriculaService";
+import { isPromoSeptiembreBono, addOneCalendarMonthMadrid } from "@/lib/matriculaService";
 
 const supabaseUrl =
   process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wjnoawmefdurqqjwqdmi.supabase.co";
@@ -176,9 +176,7 @@ export async function POST(req: NextRequest) {
     if (isPromo) {
       bonoCaducidadISO = "2026-09-30T23:59:59.000Z";
     } else {
-      const expDate = new Date();
-      expDate.setMonth(expDate.getMonth() + 1);
-      bonoCaducidadISO = expDate.toISOString();
+      bonoCaducidadISO = addOneCalendarMonthMadrid(new Date()).toISOString();
     }
 
     if (student && targetStudentId) {
@@ -189,6 +187,7 @@ export async function POST(req: NextRequest) {
       const updatePayload: Record<string, any> = {
         plan_activo: bonoName || "Bono de Clases",
         clases_restantes: updatedBalance,
+        creado_en: new Date().toISOString(),
       };
 
       const { error: updateErr } = await supabase

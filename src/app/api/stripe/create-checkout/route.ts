@@ -119,7 +119,8 @@ import {
   hasPaidOctoberRenewal,
   isPromoSeptiembreBono, 
   isPromoSeptiembreActive,
-  isClaseSueltaBono
+  isClaseSueltaBono,
+  addOneCalendarMonthMadrid
 } from "@/lib/matriculaService";
 
 export async function POST(req: NextRequest) {
@@ -307,7 +308,7 @@ export async function POST(req: NextRequest) {
         isSeptemberRenewal: isSeptemberRenewal ? "true" : "false",
         bonoCaducidad: isPromo 
           ? "2026-09-30T23:59:59.000Z" 
-          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          : addOneCalendarMonthMadrid(new Date()).toISOString(),
         isFirstBono: chargeMatricula ? "true" : "false",
         matriculaCost: chargeMatricula ? matriculaCostEuros.toFixed(2) : "0.00",
         totalAmount: ((unitAmount / 100) + (chargeMatricula ? matriculaCostEuros : 0.00)).toFixed(2),

@@ -220,21 +220,11 @@ export function calculateBonoDaysRemainingMadrid(
   const todayMadrid = getMadridDateISO(fromDate);
   if (!expMadrid || !todayMadrid) return 0;
 
-  const rawDiff = calculateCalendarDaysDiffMadrid(todayMadrid, expMadrid);
-
-  // October 30-day bonos shield:
-  // If evaluated prior to November 1st, 2026, bonos expiring on or after Nov 1
-  // must not show premature warnings (<= 7 days or Caduca MAÑANA).
-  if (todayMadrid < "2026-11-01" && expMadrid >= "2026-11-01") {
-    return Math.max(rawDiff, 8);
-  }
-
-  return rawDiff;
+  return calculateCalendarDaysDiffMadrid(todayMadrid, expMadrid);
 }
 
 /**
  * Checks if a bono is within its genuine expiration warning window (<= 7 days and >= 0 days).
- * Respects the October shield: returns false prior to November 1st for October bonos.
  */
 export function isBonoExpiringSoonMadrid(
   expirationDate: string | Date | null | undefined,
@@ -244,11 +234,6 @@ export function isBonoExpiringSoonMadrid(
   const expMadrid = getMadridDateISO(expirationDate);
   const todayMadrid = getMadridDateISO(fromDate);
   if (!expMadrid || !todayMadrid) return false;
-
-  // Prior to November 1st, October bonos valid for Nov 1 or later do not expire soon
-  if (todayMadrid < "2026-11-01" && expMadrid >= "2026-11-01") {
-    return false;
-  }
 
   const daysLeft = calculateBonoDaysRemainingMadrid(expirationDate, fromDate);
   return daysLeft <= 7 && daysLeft >= 0;
