@@ -112,10 +112,6 @@ function ClasesContent() {
   const [isBookingSubmitting, setIsBookingSubmitting] = useState(false);
   const bookingMutexRef = useRef(false);
 
-  useEffect(() => {
-    verificarYSuspenderSesionesBajoAforo();
-  }, []);
-
   const [clases, setClases] = useState<any[]>([]);
   const [openClasses, setOpenClasses] = useState<any[]>(DEFAULT_STUDIO2_OPEN_CLASSES);
   const [assignedClassIds, setAssignedClassIds] = useState<string[]>([]);
@@ -1502,7 +1498,7 @@ function ClasesContent() {
                         ) : sessionStatus.status === "suspendida_aforo_minimo" ? (
                           <span className="text-xs font-bold text-rose-400 bg-rose-500/15 px-3.5 py-1.5 rounded-xl border border-rose-500/30 flex items-center gap-1.5 shadow-sm" title={sessionStatus.motivoBloqueo}>
                             <AlertCircle size={15} className="shrink-0" />
-                            <span>Suspendida por aforo mín. (&lt; 4 alumnos a las 5h)</span>
+                            <span>Clase Suspendida por Administración</span>
                           </span>
                         ) : sessionStatus.status === "finalizada" ? (
                           <span className="text-xs font-bold text-slate-400 bg-slate-800/60 px-3.5 py-1.5 rounded-xl border border-slate-700 flex items-center gap-1.5">

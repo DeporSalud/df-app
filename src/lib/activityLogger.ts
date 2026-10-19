@@ -17,7 +17,10 @@ export type ActivityType =
   | 'seguridad_intento_fallido'
   | 'seguridad_bloqueo'
   | 'seguridad_desbloqueo'
-  | 'email_credenciales';
+  | 'email_credenciales'
+  | 'clase_suspendida'
+  | 'clase_reactivada'
+  | string;
 
 export interface ActivityLogItem {
   id?: string;
