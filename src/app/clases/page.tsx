@@ -62,6 +62,7 @@ import { publishSyncEvent } from "@/lib/syncEventBus";
 import { 
   calculateBonoPriceAndMatricula, 
   calculateBonoExpirationDate,
+  addOneCalendarMonthMadrid,
   isPromoSeptiembreActive, 
   isPromoSeptiembreBono, 
   PROMO_SEPTIEMBRE_BONOS, 
@@ -73,6 +74,7 @@ import {
   getEndOfDayMadrid, 
   calculateBonoDaysRemainingMadrid, 
   isBonoExpiringSoonMadrid, 
+  getBonoStatusBadgeMadrid,
   formatMadridDateTime 
 } from "@/lib/timezones";
 
@@ -160,7 +162,7 @@ function ClasesContent() {
 
   let expirationDate: Date | null = null;
   if (hasRemainingClasses) {
-    const rawExp = calculateBonoExpirationDate(currentStudent, storedCaducidad);
+    const rawExp = calculateBonoExpirationDate(currentStudent);
     if (rawExp) {
       // Hardened to exact 23:59:59.999 Europe/Madrid cutoff
       expirationDate = getEndOfDayMadrid(rawExp);
@@ -173,12 +175,10 @@ function ClasesContent() {
       }
     }
   }
-  const daysLeft = expirationDate ? calculateBonoDaysRemainingMadrid(expirationDate) : null;
-  const isExpiringSoon = expirationDate ? (isBonoExpiringSoonMadrid(expirationDate) && hasRemainingClasses) : false;
-  const formattedExpiration = expirationDate ? expirationDate.toLocaleDateString("es-ES", {
-    day: "numeric",
-    month: "short"
-  }) : null;
+  const bonoBadge = expirationDate ? getBonoStatusBadgeMadrid(expirationDate) : null;
+  const daysLeft = bonoBadge ? bonoBadge.daysRemaining : null;
+  const isExpiringSoon = bonoBadge ? (bonoBadge.isExpiringSoon && hasRemainingClasses) : false;
+  const formattedExpiration = bonoBadge ? bonoBadge.formattedExpiration : null;
 
   const diasSemana = [
     { key: "LUNES", dia: "LUN" },
@@ -817,7 +817,7 @@ function ClasesContent() {
           const res = await fetch(`/api/redsys/verify-order?${queryParams.toString()}`);
           const data = await res.json();
           if (typeof window !== "undefined" && currentStudent?.id) {
-            const expDate = data.bonoCaducidad || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+            const expDate = data.bonoCaducidad || addOneCalendarMonthMadrid(new Date()).toISOString();
             localStorage.setItem(`df_bono_caducidad_${currentStudent.id}`, expDate);
             localStorage.setItem(`df_bono_purchase_date_${currentStudent.id}`, new Date().toISOString());
             window.dispatchEvent(new Event("df_reservas_updated"));
@@ -873,7 +873,7 @@ function ClasesContent() {
           const data = await res.json();
           if (data.success) {
             if (typeof window !== "undefined" && currentStudent?.id) {
-              const expDate = data.bonoCaducidad || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+              const expDate = data.bonoCaducidad || addOneCalendarMonthMadrid(new Date()).toISOString();
               localStorage.setItem(`df_bono_caducidad_${currentStudent.id}`, expDate);
               localStorage.setItem(`df_bono_purchase_date_${currentStudent.id}`, new Date().toISOString());
               window.dispatchEvent(new Event("df_reservas_updated"));

@@ -9,7 +9,7 @@ import { useStudent } from "@/context/StudentContext";
 import StudentBottomNav from "@/components/StudentBottomNav";
 import TeacherPortalView from "@/components/TeacherPortalView";
 import { isPromoSeptiembreBono, calculateBonoExpirationDate } from "@/lib/matriculaService";
-import { getEndOfDayMadrid, calculateBonoDaysRemainingMadrid, isBonoExpiringSoonMadrid } from "@/lib/timezones";
+import { getEndOfDayMadrid, calculateBonoDaysRemainingMadrid, isBonoExpiringSoonMadrid, getBonoStatusBadgeMadrid } from "@/lib/timezones";
 
 export default function AppHome() {
   const router = useRouter();
@@ -59,40 +59,32 @@ export default function AppHome() {
   const isSinPlan = plan.includes("sin plan") || plan.includes("pendiente") || !currentStudent?.plan_activo;
   const isBono = plan.includes("bono") || (typeof currentStudent?.clases_restantes === "number" && currentStudent.clases_restantes > 0);
 
-  // Cálculo de caducidad del bono (1 mes / 30 días para bonos regulares, 30 de septiembre para bonos de la promo septiembre)
+  // Cálculo oficial de caducidad del bono unificado con Mis Clases y Recepción (+1 mes exacto desde fecha de compra / creado_en)
   const classesCount = currentStudent?.clases_restantes ?? 0;
   const hasRemainingClasses = typeof currentStudent?.clases_restantes === "number" && currentStudent.clases_restantes > 0;
 
-  let storedCaducidad: string | null = null;
-  if (typeof window !== "undefined" && currentStudent?.id) {
-    storedCaducidad = localStorage.getItem(`df_bono_caducidad_${currentStudent.id}`);
-  }
-
-  // Cálculo y sanación automática de la caducidad del bono (1 mes / 30 días para bonos regulares, 30/09 para promo sep)
+  // Cálculo canónico a partir del perfil real del alumno (sin depender de valores de localStorage ni fallbacks de 30d)
   let expirationDate: Date | null = null;
   if (isBono && hasRemainingClasses) {
-    const rawExp = calculateBonoExpirationDate(currentStudent, storedCaducidad);
+    const rawExp = calculateBonoExpirationDate(currentStudent);
     if (rawExp) {
       expirationDate = getEndOfDayMadrid(rawExp);
-      // Sanar y sincronizar localStorage con la fecha oficial no corrupta
+      // Sanar y sincronizar localStorage para purgar cualquier residuo o fallback corrupto
       if (typeof window !== "undefined" && currentStudent?.id) {
         const expISO = expirationDate.toISOString();
-        if (storedCaducidad !== expISO) {
+        const stored = localStorage.getItem(`df_bono_caducidad_${currentStudent.id}`);
+        if (stored !== expISO) {
           localStorage.setItem(`df_bono_caducidad_${currentStudent.id}`, expISO);
         }
       }
     }
   }
 
-  const daysLeft = expirationDate ? calculateBonoDaysRemainingMadrid(expirationDate) : null;
-  const isExpiringSoon = expirationDate ? (isBonoExpiringSoonMadrid(expirationDate) && hasRemainingClasses) : false;
-  const isExpired = daysLeft !== null && daysLeft < 0 && hasRemainingClasses;
-
-  const formattedExpiration = expirationDate ? expirationDate.toLocaleDateString("es-ES", {
-    day: "numeric",
-    month: "long",
-    year: "numeric"
-  }) : null;
+  const bonoBadge = expirationDate ? getBonoStatusBadgeMadrid(expirationDate) : null;
+  const daysLeft = bonoBadge ? bonoBadge.daysRemaining : null;
+  const isExpiringSoon = bonoBadge ? (bonoBadge.isExpiringSoon && hasRemainingClasses) : false;
+  const isExpired = bonoBadge ? (bonoBadge.isExpired && hasRemainingClasses) : false;
+  const formattedExpiration = bonoBadge ? bonoBadge.formattedExpiration : null;
 
   return (
     <div className="flex flex-col flex-1 w-full bg-[var(--color-bg)] overflow-x-hidden">
@@ -238,11 +230,17 @@ export default function AppHome() {
             {isBono && formattedExpiration && (
               <div className="flex items-center justify-between text-xs pt-3 mt-3 border-t border-white/10">
                 <span className="text-[var(--color-text-secondary)] flex items-center gap-1.5">
-                  <Clock size={13} className={isExpiringSoon ? "text-amber-400" : "text-slate-400"} />
+                  <Clock size={13} className={isExpiringSoon ? "text-amber-400" : isExpired ? "text-red-400" : "text-slate-400"} />
                   Validez del bono:
                 </span>
                 <span className={`font-semibold ${isExpiringSoon ? "text-amber-400" : isExpired ? "text-red-400" : "text-slate-300"}`}>
-                  Hasta {formattedExpiration} {daysLeft !== null && daysLeft > 0 && `(en ${daysLeft}d)`}
+                  {isExpired
+                    ? `Caducado (${formattedExpiration})`
+                    : daysLeft === 0
+                    ? `Caduca HOY (${formattedExpiration})`
+                    : daysLeft === 1
+                    ? `Caduca MAÑANA (${formattedExpiration})`
+                    : `Hasta ${formattedExpiration}${daysLeft !== null && daysLeft > 0 ? ` (en ${daysLeft}d)` : ""}`}
                 </span>
               </div>
             )}

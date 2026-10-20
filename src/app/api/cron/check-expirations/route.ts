@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/client";
 import { sendBonoExpiringEmail } from "@/lib/mailer";
 import { logActivity } from "@/lib/activityLogger";
-import { isPromoSeptiembreBono, calculateBonoExpirationDate } from "@/lib/matriculaService";
+import { isPromoSeptiembreBono, calculateBonoExpirationDate, addOneCalendarMonthMadrid } from "@/lib/matriculaService";
 import { getEndOfDayMadrid, calculateBonoDaysRemainingMadrid, isBonoExpiringSoonMadrid } from "@/lib/timezones";
 
 export const dynamic = "force-dynamic";
@@ -71,7 +71,7 @@ async function handleExpirationCheck(request: NextRequest) {
       if (!email) continue;
 
       // Calcular fecha de expiración oficial
-      const rawExpDate = calculateBonoExpirationDate(student) || new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const rawExpDate = calculateBonoExpirationDate(student) || addOneCalendarMonthMadrid(now);
       const expDate = getEndOfDayMadrid(rawExpDate);
       const daysLeft = calculateBonoDaysRemainingMadrid(expDate);
 
