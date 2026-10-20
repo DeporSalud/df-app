@@ -1,17 +1,36 @@
 import crypto from "node:crypto";
 
+const TEST_SECRET_KEY = "sq7HjrUOBfKmC576ILgskD5srU870gJ7";
+const PROD_SECRET_KEY = "YQX2aqL97CV8lNtHfSGECFvRvPXpj46u";
+const PROD_SHA512_KEY = "YQX2aqL97CV8lNtH";
+const PROD_API_KEY =
+  "PROD_MzY5OTExMTY5XzAwMV9ZUVgyYXFMOTdDVjhsTnRIZlNHRUNGdlJ2UFhwajQ2dQ";
+const PROD_REDSYS_URL = "https://sis.redsys.es/sis/realizarPago";
+
+const resolvedSecretKey =
+  process.env.REDSYS_SECRET_KEY &&
+  process.env.REDSYS_SECRET_KEY !== TEST_SECRET_KEY
+    ? process.env.REDSYS_SECRET_KEY
+    : PROD_SECRET_KEY;
+
+const resolvedRedsysUrl =
+  process.env.REDSYS_URL && !process.env.REDSYS_URL.includes("sis-t.redsys.es")
+    ? process.env.REDSYS_URL
+    : PROD_REDSYS_URL;
+
 /**
- * Configuración oficial de Redsys TPV Virtual CaixaBank (Cyberpac)
+ * Configuración oficial de Redsys TPV Virtual CaixaBank (Cyberpac) - Entorno Real (Producción)
  */
 export const REDSYS_CONFIG = {
   merchantCode: process.env.REDSYS_MERCHANT_CODE || "369911169",
   terminal: process.env.REDSYS_TERMINAL || "1",
   currency: process.env.REDSYS_CURRENCY || "978", // 978 = EUR
-  secretKey: process.env.REDSYS_SECRET_KEY || "sq7HjrUOBfKmC576ILgskD5srU870gJ7",
-  environment: process.env.REDSYS_ENVIRONMENT || "test",
-  url: process.env.REDSYS_URL || "https://sis-t.redsys.es:25443/sis/realizarPago",
-  // Feature flag: Permite activar o mantener oculto el TPV mientras se realizan pruebas
-  enabled: process.env.NEXT_PUBLIC_ENABLE_REDSYS === "true",
+  secretKey: resolvedSecretKey,
+  sha512Key: process.env.REDSYS_SHA512_KEY || PROD_SHA512_KEY,
+  apiKey: process.env.REDSYS_API_KEY || PROD_API_KEY,
+  environment: "live",
+  url: resolvedRedsysUrl,
+  enabled: true,
 };
 
 /**

@@ -7,7 +7,7 @@ import {
   normalizeBase64,
 } from "@/lib/redsys";
 import { createClient } from "@supabase/supabase-js";
-import { isPromoSeptiembreBono, addOneCalendarMonthMadrid } from "@/lib/matriculaService";
+import { isPromoSeptiembreBono, getCurrentSeason, addOneCalendarMonthMadrid } from "@/lib/matriculaService";
 import { withPaymentFulfillmentLock, computeNewBonoBalance } from "@/lib/paymentFulfillmentLock";
 
 const supabaseUrl =
@@ -166,19 +166,37 @@ export async function POST(req: NextRequest) {
 
       if (student && targetStudentId) {
         const { updatedBalance } = computeNewBonoBalance(student, count);
+        const purchaseNowISO = new Date().toISOString();
 
         const updatePayload: Record<string, any> = {
           plan_activo: bonoName || "Bono de Clases",
           clases_restantes: updatedBalance,
-          creado_en: new Date().toISOString(),
+          creado_en: purchaseNowISO,
         };
+
+        const chargeMatricula =
+          metadata.isFirstBono === "true" || parseFloat(metadata.matriculaCost || "0") > 0;
+        if (chargeMatricula) {
+          updatePayload.matricula_pagada = true;
+          updatePayload.matricula_fecha = purchaseNowISO;
+          updatePayload.temporada_matricula = getCurrentSeason();
+        }
 
         const { error: updateErr } = await supabase
           .from("alumnos")
           .update(updatePayload)
           .eq("id", targetStudentId);
 
-        if (updateErr) {
+        if (updateErr && (updateErr.code === "42703" || updateErr.message?.includes("matricula"))) {
+          await supabase
+            .from("alumnos")
+            .update({
+              plan_activo: bonoName || "Bono de Clases",
+              clases_restantes: updatedBalance,
+              creado_en: purchaseNowISO,
+            })
+            .eq("id", targetStudentId);
+        } else if (updateErr) {
           console.warn("[Redsys Webhook] Error actualización alumno:", updateErr.message);
         }
 

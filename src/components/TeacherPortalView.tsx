@@ -6,7 +6,7 @@ import {
   UserCheck, Check, Clock, Users, ShieldAlert, Sparkles, Calendar, Search, 
   Lock, LogOut, KeyRound, ArrowLeft, ChevronRight, Flame, Ticket, GraduationCap, 
   CreditCard, Building2, Trash2, AlertTriangle, Tag, CheckCircle2, ShieldCheck, X, RefreshCw,
-  CalendarDays, BarChart3, MessageCircle, Filter, QrCode
+  CalendarDays, BarChart3, MessageCircle, Filter, QrCode, Smartphone, Loader2
 } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
 import { logActivity } from "@/lib/activityLogger";
@@ -344,6 +344,67 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
   useEffect(() => {
     fetchData();
   }, [teacherName]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get("payment");
+    const order = params.get("order");
+
+    if (payment === "success" && order) {
+      const merchantParams = params.get("Ds_MerchantParameters") || "";
+      const signature = params.get("Ds_Signature") || "";
+
+      try {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete("payment");
+        cleanUrl.searchParams.delete("order");
+        cleanUrl.searchParams.delete("Ds_SignatureVersion");
+        cleanUrl.searchParams.delete("Ds_MerchantParameters");
+        cleanUrl.searchParams.delete("Ds_Signature");
+        window.history.replaceState({}, "", cleanUrl.pathname + (cleanUrl.search || ""));
+      } catch (e) {}
+
+      const verifyTeacherPayment = async () => {
+        try {
+          const queryParams = new URLSearchParams({
+            order,
+            studentId: teacherStudent?.id || "",
+            studentEmail: teacherStudent?.email || currentTeacher?.email || "",
+            merchantParams,
+            signature,
+          });
+          const res = await fetch(`/api/redsys/verify-order?${queryParams.toString()}`);
+          const data = await res.json();
+          await fetchData();
+          setModal({
+            isOpen: true,
+            title: "🎉 ¡Pago con TPV CaixaBank Completado!",
+            message: `Tu operación (Pedido ${order}) ha sido procesada con éxito por CaixaBank Cyberpac.\n\n${data.bonoName ? `Has adquirido: ${data.bonoName}\n` : ""}Tu saldo docente ha sido actualizado.`,
+            type: "success",
+            confirmText: "Ir a Open Class",
+            onConfirm: () => setActiveTab("open_classes"),
+          });
+        } catch (err) {
+          console.error("Error verificando pedido docente en Redsys:", err);
+        }
+      };
+      verifyTeacherPayment();
+    } else if (payment === "cancelled" && order) {
+      try {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete("payment");
+        cleanUrl.searchParams.delete("order");
+        window.history.replaceState({}, "", cleanUrl.pathname + (cleanUrl.search || ""));
+      } catch (e) {}
+      setModal({
+        isOpen: true,
+        title: "Pago en TPV Cancelado",
+        message: "El proceso de pago en el TPV Virtual de CaixaBank fue cancelado. No se ha realizado ningún cargo.",
+        type: "info",
+      });
+    }
+  }, [teacherStudent?.id]);
 
   // Load Roster for a class and specific date
   const loadRosterForDate = async (clase: any, dateIso: string, isSilentRefresh = false) => {
@@ -1084,6 +1145,63 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       });
     } catch (err) {
       console.error("Error requesting teacher bono:", err);
+      setIsProcessingPayment(false);
+    }
+  };
+
+  const handleTeacherRedsysCheckout = async (payMethod?: "z" | "T") => {
+    if (!selectedBonoForPayment || !teacherStudent?.id) return;
+    setIsProcessingPayment(true);
+
+    try {
+      const res = await fetch("/api/redsys/create-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bonoId: selectedBonoForPayment.id,
+          studentId: teacherStudent.id,
+          studentName: teacherName,
+          studentEmail: teacherStudent.email || currentTeacher?.email || "",
+          isFirstBonoOfYear: false,
+          isTeacher: true,
+          isRegularStudent: false,
+          calculatedPrice: selectedBonoForPayment.precioNum,
+          payMethod,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success && data.formUrl && data.params) {
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = data.formUrl;
+        form.style.display = "none";
+        for (const [key, value] of Object.entries(data.params)) {
+          const input = document.createElement("input");
+          input.type = "hidden";
+          input.name = key;
+          input.value = value as string;
+          form.appendChild(input);
+        }
+        document.body.appendChild(form);
+        form.submit();
+      } else {
+        setModal({
+          isOpen: true,
+          title: "Error con la Pasarela Bancaria",
+          message: data.error || "No se pudo iniciar la conexión con el TPV de CaixaBank.",
+          type: "warning",
+        });
+        setIsProcessingPayment(false);
+      }
+    } catch (err) {
+      console.error("Error initiating teacher Redsys checkout:", err);
+      setModal({
+        isOpen: true,
+        title: "Error de Conexión",
+        message: "No se pudo conectar con el servidor bancario.",
+        type: "warning",
+      });
       setIsProcessingPayment(false);
     }
   };
@@ -2231,20 +2349,50 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
               </div>
             </div>
 
-            <div className="space-y-2 pt-2">
+            <div className="space-y-2.5 pt-2">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleTeacherRedsysCheckout("T")}
+                  disabled={isProcessingPayment}
+                  className="py-3 px-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/25 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {isProcessingPayment ? (
+                    <Loader2 size={15} className="animate-spin" />
+                  ) : (
+                    <CreditCard size={15} />
+                  )}
+                  <span>Pagar con Tarjeta</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleTeacherRedsysCheckout("z")}
+                  disabled={isProcessingPayment}
+                  className="py-3 px-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/25 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {isProcessingPayment ? (
+                    <Loader2 size={15} className="animate-spin" />
+                  ) : (
+                    <Smartphone size={15} />
+                  )}
+                  <span>Pagar con Bizum</span>
+                </button>
+              </div>
+
               <button
                 onClick={handleTeacherBonoRequest}
                 disabled={isProcessingPayment}
-                className="w-full py-3.5 px-4 rounded-2xl bg-[var(--color-secondary)] hover:bg-[var(--color-secondary)]/90 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-[var(--color-secondary)]/20 cursor-pointer transition-all active:scale-95"
+                className="w-full py-3 px-4 rounded-2xl bg-[var(--color-secondary)] hover:bg-[var(--color-secondary)]/90 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-[var(--color-secondary)]/20 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
               >
                 <Building2 size={16} />
-                <span>Solicitar Pago en Recepción ({selectedBonoForPayment.precioDocente})</span>
+                <span>Abonar en Recepción ({selectedBonoForPayment.precioDocente})</span>
               </button>
             </div>
 
             <div className="flex items-center justify-center gap-1 text-[10px] text-slate-400 text-center">
               <ShieldCheck size={14} className="text-[var(--color-secondary)] shrink-0" />
-              <span>Quedará en STANDBY para abonar en recepción</span>
+              <span>TPV Oficial CaixaBank (activación inmediata) o Standby en Recepción</span>
             </div>
           </div>
         </div>

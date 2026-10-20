@@ -723,60 +723,17 @@ function ClasesContent() {
     }
   };
 
-  const [paymentMethodTab, setPaymentMethodTab] = useState<"stripe" | "tpv" | "transferencia" | "recepcion">("stripe");
-  const [showTpvOption, setShowTpvOption] = useState(false);
+  const [paymentMethodTab, setPaymentMethodTab] = useState<"stripe" | "tpv" | "transferencia" | "recepcion">("tpv");
+  const [showTpvOption, setShowTpvOption] = useState(true);
   const [isStripeLoading, setIsStripeLoading] = useState(false);
   const [isRedsysLoading, setIsRedsysLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const verifiedSessionIdRef = useState<{ current: string | null }>({ current: null })[0];
 
-  // Comprobar si se activa la opción de TPV:
-  // EXCLUSIVO para Fran Sarciat, Lucía Zamorano y Enrique Zamorano mientras se realizan las pruebas
+  // TPV Oficial de CaixaBank activo en Producción para todos los alumnos
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const studentName = (currentStudent?.nombre_completo || "").toLowerCase();
-    const studentEmail = (currentStudent?.email || "").toLowerCase();
-
-    const isAllowedTester = Boolean(
-      currentStudent && (
-        // Fran Sarciat
-        studentName.includes("sarciat") ||
-        studentName.includes("fran") ||
-        studentEmail.includes("sarciat") ||
-        studentEmail.includes("fran") ||
-        currentStudent.id === "demo_fran" ||
-        // Lucía Zamorano y Enrique Zamorano (Familia Zamorano / Dirección)
-        studentName.includes("zamorano") ||
-        studentEmail.includes("zamorano") ||
-        studentEmail.includes("lucia.zamorano") ||
-        studentEmail.includes("enrique.zamorano") ||
-        currentStudent.id === "1002" || // ID profesor/alumno Lucía Zamorano
-        currentStudent.id === "9999" ||  // ID Enrique Zamorano
-        // Auditor CaixaBank / Redsys
-        studentEmail.includes("caixa") ||
-        studentEmail.includes("redsys") ||
-        studentEmail.includes("cyberpac") ||
-        studentEmail.includes("comerciaglobalpay") ||
-        studentEmail.includes("auditor")
-      )
-    );
-
-    if (
-      isAllowedTester ||
-      process.env.NEXT_PUBLIC_ENABLE_REDSYS === "true" ||
-      params.get("tpv") === "true" ||
-      params.get("tpv_test") === "true" ||
-      params.get("dev_tpv") === "true" ||
-      params.get("auditor") === "caixabank"
-    ) {
-      setShowTpvOption(true);
-      // Preseleccionar la pestaña TPV para el tester para máxima comodidad
-      setPaymentMethodTab("tpv");
-    } else {
-      setShowTpvOption(false);
-      setPaymentMethodTab("stripe");
-    }
+    setShowTpvOption(true);
+    setPaymentMethodTab("tpv");
   }, [currentStudent]);
 
   // Handle Stripe & Redsys Payment Return
@@ -2218,33 +2175,18 @@ function ClasesContent() {
                 Selecciona Método de Pago:
               </label>
 
-              <div className={`grid ${showTpvOption ? "grid-cols-4" : "grid-cols-3"} gap-1.5 p-1 bg-[var(--color-bg)] rounded-2xl border border-[var(--color-border)] text-center`}>
-                {showTpvOption && (
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethodTab("tpv")}
-                    className={`py-2 px-1 rounded-xl text-[11px] font-bold transition-all flex flex-col items-center gap-1 cursor-pointer border ${
-                      paymentMethodTab === "tpv"
-                        ? "bg-blue-600 text-white shadow-md border-blue-500"
-                        : "text-blue-400 hover:text-white border-blue-500/30 bg-blue-500/10"
-                    }`}
-                  >
-                    <CreditCard size={15} />
-                    <span>TPV CaixaBank</span>
-                  </button>
-                )}
-
+              <div className="grid grid-cols-3 gap-1.5 p-1 bg-[var(--color-bg)] rounded-2xl border border-[var(--color-border)] text-center">
                 <button
                   type="button"
-                  onClick={() => setPaymentMethodTab("stripe")}
-                  className={`py-2 px-2 rounded-xl text-[11px] font-bold transition-all flex flex-col items-center gap-1 cursor-pointer ${
-                    paymentMethodTab === "stripe"
-                      ? "bg-[var(--color-primary)] text-white shadow-md"
-                      : "text-slate-400 hover:text-white"
+                  onClick={() => setPaymentMethodTab("tpv")}
+                  className={`py-2 px-2 rounded-xl text-[11px] font-bold transition-all flex flex-col items-center gap-1 cursor-pointer border ${
+                    paymentMethodTab === "tpv"
+                      ? "bg-blue-600 text-white shadow-md border-blue-500"
+                      : "text-slate-400 hover:text-white border-transparent"
                   }`}
                 >
                   <CreditCard size={15} />
-                  <span>Stripe</span>
+                  <span>Tarjeta / Bizum</span>
                 </button>
 
                 <button
