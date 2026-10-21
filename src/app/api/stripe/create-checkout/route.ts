@@ -125,6 +125,15 @@ import {
 
 export async function POST(req: NextRequest) {
   try {
+    // Stripe ha sido retirado para que todos los cobros entren por el TPV Virtual Oficial de CaixaBank (Redsys) sin comisiones de Stripe.
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          "La pasarela de pagos ha sido actualizada al TPV Oficial de CaixaBank (Tarjeta y Bizum). Por favor, recarga la página (F5) y selecciona 'Tarjeta / Bizum'.",
+      },
+      { status: 410 }
+    );
     const body = await req.json();
     const { bonoId, studentId, studentName, studentEmail, isFirstBonoOfYear, isTeacher: clientIsTeacher, isRegularStudent: clientIsRegular } = body;
 

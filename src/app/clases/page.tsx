@@ -723,16 +723,13 @@ function ClasesContent() {
     }
   };
 
-  const [paymentMethodTab, setPaymentMethodTab] = useState<"stripe" | "tpv" | "transferencia" | "recepcion">("tpv");
-  const [showTpvOption, setShowTpvOption] = useState(true);
-  const [isStripeLoading, setIsStripeLoading] = useState(false);
+  const [paymentMethodTab, setPaymentMethodTab] = useState<"tpv" | "transferencia" | "recepcion">("tpv");
   const [isRedsysLoading, setIsRedsysLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const verifiedSessionIdRef = useState<{ current: string | null }>({ current: null })[0];
 
   // TPV Oficial de CaixaBank activo en Producción para todos los alumnos
   useEffect(() => {
-    setShowTpvOption(true);
     setPaymentMethodTab("tpv");
   }, [currentStudent]);
 
@@ -899,52 +896,6 @@ function ClasesContent() {
 
     return calc;
   }
-
-  const handleStripeCheckout = async () => {
-    if (!selectedBonoForPayment || !currentStudent?.id) return;
-    setIsStripeLoading(true);
-
-    try {
-      const calc = getBonoCalculation(selectedBonoForPayment);
-      const isFirstBonoOfYear = calc ? calc.matriculaCost > 0 : false;
-      const res = await fetch("/api/stripe/create-checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bonoId: selectedBonoForPayment.id,
-          studentId: currentStudent.id,
-          studentName: currentStudent.nombre_completo,
-          studentEmail: currentStudent.email,
-          isFirstBonoOfYear,
-          isTeacher: calc?.exemptionType === "teacher",
-          isRegularStudent: calc?.exemptionType === "regular",
-          returnUrl: window.location.origin + "/clases"
-        })
-      });
-
-      const data = await res.json();
-      if (data.url) {
-        window.location.href = data.url;
-      } else {
-        setModal({
-          isOpen: true,
-          title: "Error con la Pasarela de Pago",
-          message: data.error || "No se pudo iniciar la sesión de Stripe. Inténtalo de nuevo.",
-          type: "warning"
-        });
-        setIsStripeLoading(false);
-      }
-    } catch (err: any) {
-      console.error("Error initiating Stripe checkout:", err);
-      setModal({
-        isOpen: true,
-        title: "Error de Conexión",
-        message: "No se pudo contactar con la pasarela de pagos.",
-        type: "warning"
-      });
-      setIsStripeLoading(false);
-    }
-  };
 
   const handleRedsysCheckout = async (payMethod?: "z" | "T") => {
     if (!selectedBonoForPayment || !currentStudent?.id) return;
@@ -2272,39 +2223,6 @@ function ClasesContent() {
                     <span>Pagar con Bizum</span>
                   </button>
                 </div>
-              </div>
-            )}
-
-            {/* TAB 1: STRIPE CHECKOUT */}
-            {paymentMethodTab === "stripe" && (
-              <div className="space-y-3 pt-1 animate-in fade-in duration-150">
-                <div className="p-3 rounded-2xl bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 text-xs text-slate-300 space-y-1.5">
-                  <div className="flex items-center gap-2 font-bold text-white">
-                    <ShieldCheck size={16} className="text-[var(--color-secondary)]" />
-                    <span>Pago Seguro con Tarjeta y Apple/Google Pay</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 leading-normal">
-                    Serás redirigido a la pasarela bancaria cifrada de Stripe. Tu saldo de bono se activará al instante tras completar el pago.
-                  </p>
-                </div>
-
-                <button
-                  onClick={handleStripeCheckout}
-                  disabled={isStripeLoading}
-                  className="w-full py-3.5 px-4 rounded-2xl bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-[var(--color-primary)]/25 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
-                >
-                  {isStripeLoading ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin" />
-                      <span>Conectando con Stripe...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CreditCard size={16} />
-                      <span>Pagar con Tarjeta / Apple Pay</span>
-                    </>
-                  )}
-                </button>
               </div>
             )}
 
