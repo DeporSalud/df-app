@@ -23,7 +23,14 @@ export interface TeacherRecord {
 }
 
 export const TEACHER_META_MARKER = "DF_TEACHER_META:";
+export const ALT_AUTH_MARKER = "DF_ALT_AUTH:";
 const REGISTRY_CACHE_KEY = "df_teachers_registry_cache_v2";
+
+export interface LinkedAltAuth {
+  emails?: string[];
+  tokens?: string[];
+  ids?: string[];
+}
 
 export function normalizeTeacherName(text?: string | null): string {
   return (text || "")
@@ -48,19 +55,45 @@ export function toTitleCaseName(text?: string | null): string {
 
 export function extractCleanAddress(raw?: string | null): string {
   if (!raw) return "";
-  const idx = raw.indexOf(TEACHER_META_MARKER);
-  if (idx === -1) return raw.trim();
-  return raw
-    .slice(0, idx)
-    .replace(/\|\|\s*$/, "")
-    .trim();
+  let text = raw;
+  for (const marker of [TEACHER_META_MARKER, ALT_AUTH_MARKER]) {
+    const idx = text.indexOf(marker);
+    if (idx !== -1) {
+      text = text.slice(0, idx).replace(/\|\|\s*$/, "");
+    }
+  }
+  return text.replace(/\|\|\s*$/, "").trim();
+}
+
+export function parseLinkedAltAuth(raw?: string | null): LinkedAltAuth | null {
+  if (!raw) return null;
+  const idx = raw.indexOf(ALT_AUTH_MARKER);
+  if (idx === -1) return null;
+  const after = raw.slice(idx + ALT_AUTH_MARKER.length);
+  const nextMarkerIdx = after.indexOf("||DF_");
+  const jsonPart = (nextMarkerIdx === -1 ? after : after.slice(0, nextMarkerIdx)).trim();
+  try {
+    const parsed = JSON.parse(jsonPart);
+    if (parsed && typeof parsed === "object") {
+      return {
+        emails: Array.isArray(parsed.emails) ? parsed.emails.map((e: any) => String(e).toLowerCase().trim()).filter(Boolean) : [],
+        tokens: Array.isArray(parsed.tokens) ? parsed.tokens.map((t: any) => String(t).trim()).filter(Boolean) : [],
+        ids: Array.isArray(parsed.ids) ? parsed.ids.map((i: any) => String(i).trim()).filter(Boolean) : []
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 export function parseTeacherMeta(raw?: string | null): TeacherMeta | null {
   if (!raw) return null;
   const idx = raw.indexOf(TEACHER_META_MARKER);
   if (idx === -1) return null;
-  const jsonPart = raw.slice(idx + TEACHER_META_MARKER.length).trim();
+  const after = raw.slice(idx + TEACHER_META_MARKER.length);
+  const nextMarkerIdx = after.indexOf("||DF_");
+  const jsonPart = (nextMarkerIdx === -1 ? after : after.slice(0, nextMarkerIdx)).trim();
   try {
     const parsed = JSON.parse(jsonPart);
     if (parsed && typeof parsed === "object" && typeof parsed.pin === "string") {

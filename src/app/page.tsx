@@ -26,12 +26,37 @@ export default function AppHome() {
   }, [isLoading, isAuthenticated, router]);
 
   // If logged in as Teacher, render the Teacher Portal
-  if (userRole === "profesor") {
+  if (userRole === "profesor" && isAuthenticated) {
     return <TeacherPortalView initialTab="mis_clases" />;
   }
 
-  // Guard: If not authenticated or no student profile loaded, show login prompt
-  if (!isAuthenticated && !currentStudent) {
+  // Mientras carga la sesión inicial, nunca mostrar un QR genérico ni de demostración
+  if (isLoading && !currentStudent) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[var(--color-bg)] p-6 text-center space-y-4 pb-28">
+        <div className="w-12 h-12 border-4 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin" />
+        <p className="text-xs text-[var(--color-text-secondary)] font-medium">
+          Verificando tu carnet digital personal...
+        </p>
+        <StudentBottomNav />
+      </div>
+    );
+  }
+
+  const personalQrValue = currentStudent?.nfc_token
+    ? `DF-STUDENT-${currentStudent.nfc_token}`
+    : currentStudent?.id
+    ? `DF-${currentStudent.id}`
+    : "";
+
+  const personalDisplayId = currentStudent?.nfc_token
+    ? String(currentStudent.nfc_token)
+    : currentStudent?.id
+    ? currentStudent.id.slice(0, 8).toUpperCase()
+    : "";
+
+  // Guard estricto: ningún alumno no autenticado o sin ficha válida puede ver jamás un QR
+  if (!isAuthenticated || !currentStudent || !currentStudent.id || !personalQrValue) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[var(--color-bg)] p-6 text-center space-y-6 pb-28">
         <div className="w-20 h-20 rounded-3xl bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 flex items-center justify-center text-[var(--color-primary)] shadow-2xl shadow-[var(--color-primary)]/20 animate-pulse">
@@ -40,7 +65,7 @@ export default function AppHome() {
         <div className="space-y-2 max-w-xs">
           <h2 className="text-2xl font-bold text-white font-[family-name:var(--font-heading)]">Pase Digital de Alumno</h2>
           <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
-            Inicia sesión con tu correo electrónico para consultar tu carnet digital de acceso, saldo de bonos y horarios de clase.
+            Inicia sesión con el correo electrónico de tu matrícula para consultar tu carnet digital personal, saldo de bonos y horarios de clase.
           </p>
         </div>
         <Link
@@ -266,7 +291,7 @@ export default function AppHome() {
               }}
             >
               <QRCodeCanvas
-                value={currentStudent?.nfc_token ? ("DF-STUDENT-" + currentStudent.nfc_token) : ("DF-" + (currentStudent?.id || "DEMO"))}
+                value={personalQrValue}
                 size={180}
                 level="H"
                 bgColor="#ffffff"
@@ -281,10 +306,29 @@ export default function AppHome() {
               />
             </div>
 
-            <div className="space-y-1">
-              <p className="text-sm font-mono font-bold text-white tracking-widest">
-                ID: {currentStudent?.nfc_token || "3918"}
+            <div className="space-y-2 pt-1">
+              <p className="text-lg font-extrabold text-white font-[family-name:var(--font-heading)] tracking-wide">
+                {currentStudent.nombre_completo}
               </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <span className="text-sm font-mono font-black text-white tracking-widest px-3 py-1 rounded-full bg-white/10 border border-white/20">
+                  ID: {personalDisplayId}
+                </span>
+                <span className={`text-xs font-bold px-3 py-1 rounded-full border ${
+                  isSinPlan
+                    ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                    : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                }`}>
+                  {currentStudent.plan_activo || "Sin Plan Activo"}
+                </span>
+              </div>
+              {isSinPlan && (
+                <div className="mt-2 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-left">
+                  <p className="text-[11px] text-amber-200 leading-relaxed">
+                    <strong>⚠️ Cuenta sin cuota vinculada:</strong> Si ya estás matriculada/o con otro correo (por ejemplo, el de tu madre o padre), muéstrale este código a recepción para vincularlo a tu ficha en 1 clic.
+                  </p>
+                </div>
+              )}
               <p className="text-xs text-[var(--color-text-secondary)]">
                 Acerca este código al lector de recepción o tableta de sala para registrar tu asistencia.
               </p>

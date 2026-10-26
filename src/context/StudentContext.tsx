@@ -9,7 +9,8 @@ import { subscribeSyncEvent } from "@/lib/syncEventBus";
 import {
   getInitialTeacherRecords,
   mergeTeachersFromAlumnosRows,
-  extractCleanAddress
+  extractCleanAddress,
+  parseLinkedAltAuth
 } from "@/lib/teacherRegistryService";
 
 export interface Student {
@@ -24,6 +25,7 @@ export interface Student {
   dni?: string;
   nfc_token?: string;
   direccion?: string;
+  raw_direccion?: string;
   fecha_nacimiento?: string;
   matricula_pagada?: boolean;
   matricula_fecha?: string;
@@ -180,7 +182,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
     }
     return false;
   });
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const loadFallbackStudents = () => {
     if (typeof window !== "undefined") {
@@ -230,6 +232,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
 
           return {
             ...s,
+            raw_direccion: s.direccion || undefined,
             direccion: extractCleanAddress(s.direccion) || undefined,
             es_regular: isRegular,
             alumnos_clases_ids: assignedIds,
@@ -249,12 +252,48 @@ export function StudentProvider({ children }: { children: ReactNode }) {
 
         const savedSessionId = typeof window !== "undefined" ? localStorage.getItem("df_student_session_id") : null;
         if (savedSessionId) {
-          const found = enriched.find(s => s.id === savedSessionId || s.email?.toLowerCase() === savedSessionId?.toLowerCase());
+          let found = enriched.find(s =>
+            s.id === savedSessionId ||
+            s.email?.toLowerCase() === savedSessionId?.toLowerCase() ||
+            parseLinkedAltAuth(s.raw_direccion)?.ids?.includes(savedSessionId) ||
+            parseLinkedAltAuth(s.raw_direccion)?.emails?.includes(savedSessionId.toLowerCase())
+          );
+
+          // Si la cuenta duplicada fue fusionada en recepción a la ficha matriculada, migrar sesión automáticamente
+          if (!found && typeof window !== "undefined") {
+            try {
+              const cachedRaw = localStorage.getItem("df_current_student_data");
+              const cachedObj = cachedRaw ? JSON.parse(cachedRaw) : null;
+              if (cachedObj) {
+                const cToken = String(cachedObj.nfc_token || "").trim();
+                const cEmail = String(cachedObj.email || "").trim().toLowerCase();
+                found = enriched.find(s => {
+                  const alt = parseLinkedAltAuth(s.raw_direccion);
+                  if (cToken && (s.nfc_token === cToken || alt?.tokens?.includes(cToken))) return true;
+                  if (cEmail && (s.email?.toLowerCase() === cEmail || alt?.emails?.includes(cEmail))) return true;
+                  return false;
+                });
+              }
+            } catch {}
+          }
+
           if (found) {
             setCurrentStudentIdState(found.id);
             if (typeof window !== "undefined") {
+              localStorage.setItem("df_student_session_id", found.id);
               localStorage.setItem("df_current_student_data", JSON.stringify(found));
               localStorage.setItem("df_student_session", JSON.stringify(found));
+            }
+          } else if (savedSessionId !== "demo_fran") {
+            // Limpiar sesión huérfana/inválida para impedir que aparezca un QR fantasma
+            setCurrentStudentIdState("");
+            if (typeof window !== "undefined") {
+              localStorage.removeItem("df_student_session_id");
+              localStorage.removeItem("df_current_student_data");
+              localStorage.removeItem("df_student_session");
+            }
+            if (savedRole !== "profesor") {
+              setIsAuthenticated(false);
             }
           }
         }
@@ -382,14 +421,15 @@ export function StudentProvider({ children }: { children: ReactNode }) {
     let match = students.find(
       s => s.email?.toLowerCase() === lookupEmail || 
            s.email?.toLowerCase() === cleanEmail ||
-           s.email?.toLowerCase().replace(/\./g, "") === cleanEmail.replace(/\./g, "")
+           s.email?.toLowerCase().replace(/\./g, "") === cleanEmail.replace(/\./g, "") ||
+           parseLinkedAltAuth(s.raw_direccion)?.emails?.includes(cleanEmail)
     );
 
     if (!match) {
       const { data } = await supabase
         .from("alumnos")
         .select("*")
-        .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail}`);
+        .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail},direccion.ilike.%${cleanEmail}%`);
 
       if (data && data.length > 0) {
         match = data[0];
@@ -459,8 +499,8 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       const cleanPhone = studentData.telefono.replace(/\D/g, "").slice(-9);
       const cleanName = studentData.nombre_completo.trim();
       
-      // 1. Comprobar si ya existe un perfil de alumno previo (por email, teléfono o nombre)
-      const orClauses: string[] = [`email.ilike.${cleanEmail}`];
+      // 1. Comprobar si ya existe un perfil de alumno previo (por email, alias vinculado, teléfono o nombre)
+      const orClauses: string[] = [`email.ilike.${cleanEmail}`, `direccion.ilike.%${cleanEmail}%`];
       if (cleanPhone.length >= 9) {
         orClauses.push(`telefono.ilike.%${cleanPhone}%`);
       }
@@ -576,7 +616,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
           const { data: foundList } = await supabase
             .from("alumnos")
             .select("*, alumnos_clases(*)")
-            .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail}`);
+            .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail},direccion.ilike.%${cleanEmail}%`);
           if (foundList && foundList.length > 0) {
             targetStudent = foundList.find(s => 
               (Array.isArray(s.alumnos_clases) && s.alumnos_clases.length > 0) ||
