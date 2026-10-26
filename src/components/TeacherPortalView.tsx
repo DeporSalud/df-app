@@ -78,10 +78,6 @@ const TEACHER_DB_ID_MAP: Record<string, string> = {
   "LUCÍA ZAMORANO": "2d95e851-b927-494b-9558-d7ed6d447a20",
   "1002": "2d95e851-b927-494b-9558-d7ed6d447a20",
 
-  // 1003: Andrea Soto
-  "ANDREA SOTO": "7a100300-0000-4000-a000-000000001003",
-  "1003": "7a100300-0000-4000-a000-000000001003",
-
   // 1004: Eva Leiva
   "EVA LEIVA": "80c59814-1ab4-4793-9039-e8fe1c5ef681",
   "1004": "80c59814-1ab4-4793-9039-e8fe1c5ef681",
@@ -132,7 +128,12 @@ const TEACHER_DB_ID_MAP: Record<string, string> = {
   "MARTA GARCÍA": "e9cc4200-aba2-4e67-8191-808c40e75621",
   "MARTA GARCIA VAZQUEZ": "e9cc4200-aba2-4e67-8191-808c40e75621",
   "MARTA GARCÍA VÁZQUEZ": "e9cc4200-aba2-4e67-8191-808c40e75621",
-  "1014": "e9cc4200-aba2-4e67-8191-808c40e75621"
+  "1014": "e9cc4200-aba2-4e67-8191-808c40e75621",
+
+  // 1015: Blanca Elías
+  "BLANCA ELIAS": "7a101500-0000-4000-a000-000000001015",
+  "BLANCA ELÍAS": "7a101500-0000-4000-a000-000000001015",
+  "1015": "7a101500-0000-4000-a000-000000001015"
 };
 
 const isRegularMembership = (plan?: string | null, remaining?: number | null): boolean => {
@@ -266,7 +267,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       // Find teacher in alumnos table or create fallback
       const { data: studentList } = await supabase.from("alumnos").select("*");
       const normName = normalizeText(teacherName);
-      const explicitUUID = TEACHER_DB_ID_MAP[normName.toUpperCase()] || (currentTeacher?.id ? TEACHER_DB_ID_MAP[currentTeacher.id] : undefined);
+      const explicitUUID = currentTeacher?.uuid || TEACHER_DB_ID_MAP[normName.toUpperCase()] || (currentTeacher?.id ? TEACHER_DB_ID_MAP[currentTeacher.id] : undefined);
 
       let tStudent = (studentList || []).find(s => {
         if (explicitUUID && s.id === explicitUUID) return true;

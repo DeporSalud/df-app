@@ -63,7 +63,7 @@ const KEYPAD_BUTTONS = [
 
 export default function LoginPage() {
   const router = useRouter();
-  const { loginAsTeacher, requestStudentOtp, verifyStudentWithOtp } = useStudent();
+  const { loginAsTeacher, requestStudentOtp, verifyStudentWithOtp, teachers } = useStudent();
   
   const [selectedRole, setSelectedRole] = useState<"alumno" | "profesor">("alumno");
 
@@ -106,10 +106,10 @@ export default function LoginPage() {
 
   // Global sync for all teachers from Supabase (to update list indicators in real time)
   const syncAllTeachers = useCallback(async () => {
-    const ids = PROFESORES_LIST.map(p => p.id);
+    const ids = teachers.map(p => p.id);
     const lockedSet = await syncAllTeachersLockoutsWithSupabase(ids);
     setLockedTeacherIds(lockedSet);
-  }, []);
+  }, [teachers]);
 
   useEffect(() => {
     if (selectedRole !== "profesor") return;
@@ -287,7 +287,7 @@ export default function LoginPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedRole, selectedTeacher, teacherLockout.isLocked, isSubmitting, teacherPin]);
 
-  const filteredTeachers = PROFESORES_LIST.filter(t => 
+  const filteredTeachers = teachers.filter(t => 
     t.name.toLowerCase().includes(teacherSearch.toLowerCase()) ||
     t.email.toLowerCase().includes(teacherSearch.toLowerCase())
   );

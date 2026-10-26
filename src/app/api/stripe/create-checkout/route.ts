@@ -196,8 +196,7 @@ export async function POST(req: NextRequest) {
             .select("clase_id")
             .eq("alumno_id", dbStudent.id);
 
-          const hasEnrollments = Array.isArray(enrollments) && enrollments.length > 0;
-          const assignedIds = hasEnrollments ? enrollments.map((e: any) => e.clase_id) : [];
+          const assignedIds = (enrollments || []).map((e: any) => e.clase_id);
 
           // Check if regular class student (R1)
           isRegular = isRegularClassStudent(dbStudent, { assignedClassIds: assignedIds });

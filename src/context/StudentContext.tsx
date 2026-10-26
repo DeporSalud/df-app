@@ -6,6 +6,11 @@ import { supabase } from "@/lib/supabase/client";
 import { generateAndSendOtp, verifyOtpCode, clearActiveOtp } from "@/lib/otpService";
 import { isRegularClassStudent, hasPaidSeasonMatricula } from "@/lib/matriculaService";
 import { subscribeSyncEvent } from "@/lib/syncEventBus";
+import {
+  getInitialTeacherRecords,
+  mergeTeachersFromAlumnosRows,
+  extractCleanAddress
+} from "@/lib/teacherRegistryService";
 
 export interface Student {
   id: string;
@@ -31,6 +36,7 @@ export interface Student {
 
 export interface Teacher {
   id: string;
+  uuid?: string;
   name: string;
   email: string;
   pin: string;
@@ -41,22 +47,22 @@ export interface Teacher {
 }
 
 export const PROFESORES_LIST: Teacher[] = [
-  { id: "1001", name: "LUCÍA MUÑOZ", email: "lucia.munoz@dancefactory.es", pin: "1001", especialidad: "Danza Urbana", sede: "tejar" },
-  { id: "1002", name: "LUCÍA ZAMORANO", email: "lucia.zamorano@dancefactory.es", pin: "1002", especialidad: "Contemporáneo", sede: "tejar" },
-  { id: "1003", name: "ANDREA SOTO", email: "andrea.soto@dancefactory.es", pin: "1003", especialidad: "Comercial & Open Classes", sede: "castilla" },
-  { id: "1004", name: "EVA LEIVA", email: "eva.leiva@dancefactory.es", pin: "1004", especialidad: "Jazz Lírico", sede: "castilla" },
-  { id: "1005", name: "LUCAS LÓPEZ", email: "lucas.lopez@dancefactory.es", pin: "1005", especialidad: "Hip Hop & Freestyle", sede: "tejar" },
-  { id: "1006", name: "PAULA JIMÉNEZ", email: "paula.jimenez@dancefactory.es", pin: "1006", especialidad: "Ballet & Técnica", sede: "castilla" },
-  { id: "1007", name: "ABEL Y NAYARA", email: "abel.nayara@dancefactory.es", pin: "1007", especialidad: "Salsa & Bachata", sede: "castilla" },
-  { id: "1008", name: "DARÍO HUMBERTO", email: "dario.humberto@dancefactory.es", pin: "1008", especialidad: "Urbano & Acrobacia", sede: "tejar" },
-  { id: "1009", name: "NEREA OLIVARES", email: "nerea.olivares@dancefactory.es", pin: "1009", especialidad: "Danza Infantil & Juvenil", sede: "tejar" },
-  { id: "1010", name: "ALEJANDRO ROVINA", email: "alejandro.rovina@dancefactory.es", pin: "1010", especialidad: "Heels & Comercial", sede: "castilla" },
-  { id: "1011", name: "NIL BARBERÁ", email: "nil.barbera@dancefactory.es", pin: "1011", especialidad: "Dirección", sede: "castilla" },
-  { id: "1012", name: "MARIO GADEA", email: "mario.gadea@dancefactory.es", pin: "1012", especialidad: "Comercial & Open Classes", sede: "castilla" },
-  { id: "1013", name: "DANIELA MÉRIDA", email: "daniela.merida@dancefactory.es", pin: "1013", especialidad: "Urbano Adultos", sede: "castilla" },
-  { id: "1014", name: "MARTA GARCÍA VÁZQUEZ", email: "marta.garci.013@gmail.com", pin: "1014", especialidad: "Redes Sociales & Comunicación", sede: "tejar" },
-  { id: "9998", name: "RUTH DOMÍNGUEZ", email: "ruth.dominguez@dancefactory.es", pin: "2026", especialidad: "Dirección", sede: "consolidado", isAdmin: true },
-  { id: "9999", name: "ADMINISTRADOR MASTER", email: "admin@dancefactory.es", pin: "9999", especialidad: "Dirección", sede: "consolidado", isAdmin: true }
+  { id: "1001", uuid: "c57fb3d0-525f-474a-8de7-d6d504b540be", name: "LUCÍA MUÑOZ", email: "lucia.munoz@dancefactory.es", pin: "1001", especialidad: "Danza Urbana", sede: "tejar" },
+  { id: "1002", uuid: "2d95e851-b927-494b-9558-d7ed6d447a20", name: "LUCÍA ZAMORANO", email: "lucia.zamorano@dancefactory.es", pin: "1002", especialidad: "Contemporáneo", sede: "tejar" },
+  { id: "1004", uuid: "80c59814-1ab4-4793-9039-e8fe1c5ef681", name: "EVA LEIVA", email: "eva.leiva@dancefactory.es", pin: "1004", especialidad: "Jazz Lírico", sede: "castilla" },
+  { id: "1005", uuid: "7a100500-0000-4000-a000-000000001005", name: "LUCAS LÓPEZ", email: "lucas.lopez@dancefactory.es", pin: "1005", especialidad: "Hip Hop & Freestyle", sede: "tejar" },
+  { id: "1006", uuid: "32d7139b-b2a2-4084-9322-d86cda358df7", name: "PAULA JIMÉNEZ", email: "paula.jimenez@dancefactory.es", pin: "1006", especialidad: "Ballet & Técnica", sede: "castilla" },
+  { id: "1007", uuid: "7a100700-0000-4000-a000-000000001007", name: "ABEL Y NAYARA", email: "abel.nayara@dancefactory.es", pin: "1007", especialidad: "Salsa & Bachata", sede: "castilla" },
+  { id: "1008", uuid: "7a100800-0000-4000-a000-000000001008", name: "DARÍO HUMBERTO", email: "dario.humberto@dancefactory.es", pin: "1008", especialidad: "Urbano & Acrobacia", sede: "tejar" },
+  { id: "1009", uuid: "7a100900-0000-4000-a000-000000001009", name: "NEREA OLIVARES", email: "nerea.olivares@dancefactory.es", pin: "1009", especialidad: "Danza Infantil & Juvenil", sede: "tejar" },
+  { id: "1010", uuid: "7a101000-0000-4000-a000-000000001010", name: "ALEJANDRO ROVINA", email: "alejandro.rovina@dancefactory.es", pin: "1010", especialidad: "Heels & Comercial", sede: "castilla" },
+  { id: "1011", uuid: "7a101100-0000-4000-a000-000000001011", name: "NIL BARBERÁ", email: "nil.barbera@dancefactory.es", pin: "1011", especialidad: "Dirección", sede: "castilla" },
+  { id: "1012", uuid: "145547d1-643c-40aa-9144-305893e8f64c", name: "MARIO GADEA", email: "mario.gadea@dancefactory.es", pin: "1012", especialidad: "Comercial & Open Classes", sede: "castilla" },
+  { id: "1013", uuid: "0812eb2d-bcb5-4f9e-b690-1beaafcd3e61", name: "DANIELA MÉRIDA", email: "daniela.merida@dancefactory.es", pin: "1013", especialidad: "Urbano Adultos & Comercial", sede: "castilla" },
+  { id: "1014", uuid: "e9cc4200-aba2-4e67-8191-808c40e75621", name: "MARTA GARCÍA VÁZQUEZ", email: "marta.garci.013@gmail.com", pin: "1014", especialidad: "Redes Sociales & Comunicación", sede: "tejar" },
+  { id: "1015", uuid: "7a101500-0000-4000-a000-000000001015", name: "BLANCA ELÍAS", email: "blanca.elias@dancefactory.es", pin: "1015", especialidad: "Comercial", sede: "castilla" },
+  { id: "9998", uuid: "ffd8f04a-5f63-4c8b-b638-9f9483df8d3c", name: "RUTH DOMÍNGUEZ", email: "ruth.dominguez@dancefactory.es", pin: "2026", especialidad: "Dirección", sede: "consolidado", isAdmin: true },
+  { id: "9999", uuid: "ffd8f04a-5f63-4c8b-b638-9f9483df8d3c", name: "ADMINISTRADOR MASTER", email: "admin@dancefactory.es", pin: "9999", especialidad: "Dirección", sede: "consolidado", isAdmin: true }
 ];
 
 export interface RegisterStudentData {
@@ -153,6 +159,9 @@ export function StudentProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [userRole, setUserRoleState] = useState<UserRole>("alumno");
   const [students, setStudents] = useState<Student[]>(INITIAL_STUDENTS);
+  const [teachersList, setTeachersList] = useState<Teacher[]>(() =>
+    getInitialTeacherRecords(true)
+  );
   const [currentStudentId, setCurrentStudentIdState] = useState<string>(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem("df_student_session_id") || "";
@@ -211,6 +220,9 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       }
       
       if (!error && data && data.length > 0) {
+        const activeSyncedTeachers = mergeTeachersFromAlumnosRows(data).filter((t) => t.active);
+        setTeachersList(activeSyncedTeachers);
+
         const enriched = data.map((s: any) => {
           const assignedIds = enrollmentsByStudent[s.id] || [];
           const isRegular = isRegularClassStudent(s, { assignedClassIds: assignedIds });
@@ -218,6 +230,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
 
           return {
             ...s,
+            direccion: extractCleanAddress(s.direccion) || undefined,
             es_regular: isRegular,
             alumnos_clases_ids: assignedIds,
             matricula_pagada: isPaid
@@ -248,7 +261,23 @@ export function StudentProvider({ children }: { children: ReactNode }) {
 
         const savedTeacherId = typeof window !== "undefined" ? localStorage.getItem("df_teacher_session_id") : null;
         if (savedTeacherId) {
-          setCurrentTeacherIdState(savedTeacherId);
+          const stillActive = activeSyncedTeachers.some(
+            (t) => t.id === savedTeacherId || t.pin === savedTeacherId
+          );
+          if (stillActive) {
+            setCurrentTeacherIdState(savedTeacherId);
+          } else {
+            // Revoke session immediately if teacher access was deactivated in Admin
+            if (typeof window !== "undefined") {
+              localStorage.removeItem("df_teacher_session_id");
+              if (savedRole === "profesor") {
+                localStorage.removeItem("df_auth_role");
+              }
+            }
+            if (savedRole === "profesor" && !savedSessionId) {
+              setIsAuthenticated(false);
+            }
+          }
         }
       } else if (error) {
         console.warn("Supabase fetch returned error, using cached or fallback students:", error);
@@ -390,12 +419,25 @@ export function StudentProvider({ children }: { children: ReactNode }) {
   const loginAsTeacher = async (pinOrEmail: string, pass?: string): Promise<boolean> => {
     const clean = pinOrEmail.trim().toLowerCase();
     
-    // Match by PIN or Email or Name
-    const teacher = PROFESORES_LIST.find(t => 
+    // Match by PIN or Email or Name against active synced teachers
+    let teacher = teachersList.find(t => 
       t.pin === clean || 
       t.email.toLowerCase() === clean || 
       t.name.toLowerCase().includes(clean)
     );
+
+    if (!teacher) {
+      const { data } = await supabase.from("alumnos").select("*");
+      if (data && data.length > 0) {
+        const refreshed = mergeTeachersFromAlumnosRows(data).filter((t) => t.active);
+        setTeachersList(refreshed);
+        teacher = refreshed.find(t =>
+          t.pin === clean ||
+          t.email.toLowerCase() === clean ||
+          t.name.toLowerCase().includes(clean)
+        );
+      }
+    }
 
     if (teacher) {
       setUserRole("profesor");
@@ -700,7 +742,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         } catch { return null; }
       })() : null))
     : null;
-  const currentTeacher = PROFESORES_LIST.find(t => t.id === currentTeacherId) || PROFESORES_LIST[0];
+  const currentTeacher = teachersList.find(t => t.id === currentTeacherId || t.pin === currentTeacherId) || teachersList[0] || PROFESORES_LIST[0];
 
   return (
     <StudentContext.Provider value={{ 
@@ -708,7 +750,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       students, 
       currentStudent, 
       currentTeacher,
-      teachers: PROFESORES_LIST,
+      teachers: teachersList,
       isLoading, 
       isAuthenticated,
       setCurrentStudentId, 
