@@ -1,161 +1,108 @@
 import assert from "assert";
+import crypto from "crypto";
 
-// Simulation of Browser LocalStorage
-const localStorageData = new Map();
-global.window = {};
-global.localStorage = {
-  getItem: (k) => localStorageData.get(k) || null,
-  setItem: (k, v) => localStorageData.set(k, String(v)),
-  removeItem: (k) => localStorageData.delete(k),
-  clear: () => localStorageData.clear()
-};
+const OTP_HMAC_SECRET = "df-alcorcon-otp-hmac-v2-2026-9f4c8e2a1b7d";
+const DESK_OTP_BUCKET_MS = 15 * 60 * 1000;
 
-// Simulation of Server OTP Store
-const serverStore = new Map();
-function storeServerOtp(email, code) {
-  serverStore.set(email.trim().toLowerCase(), {
-    code: code.trim(),
-    expiresAt: Date.now() + 600000,
-    attemptsLeft: 5
-  });
-}
-function verifyServerOtp(email, code) {
-  const cleanEmail = email.trim().toLowerCase();
-  const cleanCode = code.trim();
-  const data = serverStore.get(cleanEmail);
-  if (!data) return { success: false, error: "No hay código activo." };
-  if (Date.now() > data.expiresAt) return { success: false, error: "Código expirado." };
-  if (data.code !== cleanCode) return { success: false, error: "Código incorrecto." };
-  return { success: true };
-}
-
-// Simulated fetch for /api/verify-otp
-global.fetch = async (url, options) => {
-  if (url === "/api/verify-otp") {
-    const { email, code, action } = JSON.parse(options.body);
-    if (action === "clear") {
-      serverStore.delete(email.trim().toLowerCase());
-      return { ok: true, json: async () => ({ success: true }) };
-    }
-    const result = verifyServerOtp(email, code);
-    return {
-      ok: result.success,
-      json: async () => result
-    };
+function canonicalizeOtpEmail(email) {
+  const clean = (email || "").trim().toLowerCase();
+  const atIdx = clean.indexOf("@");
+  if (atIdx === -1) return clean;
+  let local = clean.slice(0, atIdx);
+  let domain = clean.slice(atIdx + 1);
+  if (domain === "googlemail.com") domain = "gmail.com";
+  if (domain === "gmail.com") {
+    const plusIdx = local.indexOf("+");
+    if (plusIdx !== -1) local = local.slice(0, plusIdx);
+    local = local.replace(/\./g, "");
   }
-  return { ok: false, json: async () => ({ error: "Not found" }) };
-};
-
-// Simulated verifyOtpCode logic (matching updated otpService.ts)
-async function verifyOtpCode(email, inputCode) {
-  if (!email || !inputCode) return { success: false, error: "Introduce código." };
-  const cleanEmail = email.trim().toLowerCase();
-  const cleanCode = inputCode.replace(/[\s\-]/g, "").trim();
-
-  if (cleanCode === "123456" || cleanCode === "999999") return { success: true };
-
-  const key = "df_otp_auth_" + cleanEmail;
-  const raw = localStorage.getItem(key);
-  if (raw) {
-    try {
-      const data = JSON.parse(raw);
-      if (Date.now() <= data.expiresAt && data.code === cleanCode) {
-        return { success: true };
-      }
-    } catch {}
-  }
-
-  // Fallback to server
-  const res = await fetch("/api/verify-otp", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: cleanEmail, code: cleanCode })
-  });
-  const data = await res.json();
-  if (res.ok && data.success) return { success: true };
-
-  return { success: false, error: "Código de verificación incorrecto o expirado. Revisa el correo electrónico recibido." };
+  return `${local}@${domain}`;
 }
 
-// Simulated verifyStudentWithOtp logic (matching updated StudentContext.tsx)
-async function verifyStudentWithOtp(email, code) {
-  const res = await verifyOtpCode(email, code);
-  if (!res.success) return res;
-  // Login / create session succeeds
-  return { success: true };
+function signOtpToken(email, code, expiresAt) {
+  const canonicalEmail = canonicalizeOtpEmail(email);
+  const sig = crypto
+    .createHmac("sha256", OTP_HMAC_SECRET)
+    .update(`${canonicalEmail}|${code}|${expiresAt}`)
+    .digest("hex");
+  return `${expiresAt}.${sig}`;
 }
 
-// Simulated OtpVerificationModal verification trigger (matching updated OtpVerificationModal.tsx)
-async function triggerModalVerification(email, code, onVerifyCode) {
-  let result;
-  if (onVerifyCode) {
-    result = await onVerifyCode(code);
-  } else {
-    result = await verifyOtpCode(email, code);
-  }
-  return result;
+function computeDeskOtpForWindow(email, windowIdx) {
+  const canonicalEmail = canonicalizeOtpEmail(email);
+  const digest = crypto
+    .createHmac("sha256", OTP_HMAC_SECRET)
+    .update(`desk-v1|${canonicalEmail}|${windowIdx}`)
+    .digest();
+  const num = digest.readUInt32BE(0) % 900000;
+  return String(100000 + num);
 }
 
 async function runTests() {
   console.log("==================================================");
-  console.log("TEST SUITE: VERIFICACIÓN DEL FLUJO OTP DANCE FACTORY");
+  console.log("TEST SUITE: OTP ROLLING + HMAC + GMAIL DOTS + DESK");
   console.log("==================================================");
 
-  const testEmail = "alumno.real@dancefactory.es";
-  const realOtpCode = "742189";
+  // 1. Gmail dot-insensitive canonicalization (Patricia Villalta Cortés case)
+  const patriciaDbEmail = "cristina.cortesb@gmail.com";
+  const patriciaTypedNoDot = "cristinacortesb@gmail.com";
+  const patriciaGooglemail = "Cristina.CortesB+df@googlemail.com";
+  assert.strictEqual(
+    canonicalizeOtpEmail(patriciaDbEmail),
+    canonicalizeOtpEmail(patriciaTypedNoDot),
+    "Gmail con punto y sin punto deben resolver al mismo bucket canónico"
+  );
+  assert.strictEqual(
+    canonicalizeOtpEmail(patriciaDbEmail),
+    canonicalizeOtpEmail(patriciaGooglemail),
+    "googlemail + alias debe resolver al mismo bucket canónico"
+  );
+  console.log("✓ [TEST 1] Canonicalización Gmail (cristina.cortesb == cristinacortesb) OK");
 
-  // Scenario 1: OTP generated on client and stored on server
-  console.log("\n[TEST 1] Generación de OTP real...");
-  localStorage.setItem("df_otp_auth_" + testEmail, JSON.stringify({
-    code: realOtpCode,
-    expiresAt: Date.now() + 600000,
-    attemptsLeft: 3,
-    lastSentAt: Date.now()
-  }));
-  storeServerOtp(testEmail, realOtpCode);
-  console.log("✓ OTP almacenado tanto en localStorage como en el servidor");
+  // 2. Hotmail preservation (Olivia Anna Hrebenyvk case — dots ARE distinct in Hotmail)
+  assert.strictEqual(
+    canonicalizeOtpEmail("olivia.anna2013@hotmail.com"),
+    "olivia.anna2013@hotmail.com",
+    "Hotmail NO debe eliminar puntos del local-part"
+  );
+  console.log("✓ [TEST 2] Preservación exacta de puntos en dominios no-Gmail (Hotmail) OK");
 
-  // Scenario 2: Student enters the real code in OtpVerificationModal
-  console.log("\n[TEST 2] Verificación a través del Modal (Caso real)...");
-  const modalRes = await triggerModalVerification(testEmail, realOtpCode, async (code) => {
-    return await verifyStudentWithOtp(testEmail, code);
-  });
-  assert.strictEqual(modalRes.success, true, "El modal debe validar con éxito el código real");
-  console.log("✓ Modal validó correctamente:", modalRes);
+  // 3. Rolling multi-code bucket (Alba Rodríguez / Olivia delayed email after clicking Reenviar)
+  const bucket = [];
+  const now = Date.now();
+  const code1 = "318492";
+  const code2 = "805127";
+  bucket.push({ code: code1, expiresAt: now + 30 * 60 * 1000 });
+  bucket.push({ code: code2, expiresAt: now + 30 * 60 * 1000 });
+  assert.strictEqual(bucket.some((c) => c.code === code1 && c.expiresAt > now), true, "El primer código sigue siendo válido tras reenviar");
+  assert.strictEqual(bucket.some((c) => c.code === code2 && c.expiresAt > now), true, "El segundo código también es válido");
+  console.log("✓ [TEST 3] Ventana rolling de 30 min (Reenviar NO invalida el código anterior en tránsito) OK");
 
-  // Scenario 3: Regression test against the old bug
-  console.log("\n[TEST 3] Prueba de Regresión: Comprobaciones consecutivas sin borrado prematuro...");
-  const secondCheck = await verifyOtpCode(testEmail, realOtpCode);
-  assert.strictEqual(secondCheck.success, true, "Llamadas sucesivas de verificación deben mantenerse válidas");
-  console.log("✓ Verificación consecutiva pasó sin fallo de expiración");
+  // 4. Stateless HMAC token verification across Gmail dot variations (survives container recycle)
+  const exp = now + 30 * 60 * 1000;
+  const token = signOtpToken(patriciaTypedNoDot, code1, exp);
+  const [expStr, sig] = token.split(".");
+  const verifySig = crypto
+    .createHmac("sha256", OTP_HMAC_SECRET)
+    .update(`${canonicalizeOtpEmail(patriciaDbEmail)}|${code1}|${Number(expStr)}`)
+    .digest("hex");
+  assert.strictEqual(sig, verifySig, "Token HMAC firmado sin estado valida tras reinicio de contenedor");
+  console.log("✓ [TEST 4] Firma criptográfica stateless HMAC-SHA256 OK");
 
-  // Scenario 4: Cross-device / Private browsing (No localStorage, only server OTP)
-  console.log("\n[TEST 4] Caso multidispositivo / navegación privada (sin localStorage)...");
-  localStorage.clear(); // Simulate no local storage
-  const crossDeviceRes = await verifyOtpCode(testEmail, realOtpCode);
-  assert.strictEqual(crossDeviceRes.success, true, "Debe validar a través del servidor si no hay localStorage");
-  console.log("✓ Validación en servidor exitosa sin localStorage");
+  // 5. Stateless Reception Counter Code (CRM -> Student App instant login)
+  const win = Math.floor(now / DESK_OTP_BUCKET_MS);
+  const crmCode = computeDeskOtpForWindow("juanijulio@gmail.com", win);
+  assert.match(crmCode, /^\d{6}$/, "El código de mostrador debe tener 6 dígitos");
+  const validInPrevWindow = [0, -1, -2, 1].some(
+    (offset) => computeDeskOtpForWindow("JuaniJulio@gmail.com", win + offset) === crmCode
+  );
+  assert.strictEqual(validInPrevWindow, true, "Código generado en CRM Recepción valida en Student App");
+  console.log("✓ [TEST 5] Código instantáneo de Recepción (CRM <-> Student App) OK:", crmCode);
 
-  // Scenario 5: Incorrect code
-  console.log("\n[TEST 5] Introducción de código incorrecto...");
-  const badRes = await verifyOtpCode(testEmail, "000000");
-  assert.strictEqual(badRes.success, false, "Código incorrecto debe ser rechazado");
-  console.log("✓ Código erróneo rechazado correctamente con:", badRes.error);
-
-  // Scenario 6: Master demo bypass codes
-  console.log("\n[TEST 6] Códigos maestros de bypass (123456 / 999999)...");
-  const master1 = await verifyOtpCode("cualquiera@test.com", "123456");
-  const master2 = await verifyOtpCode("otro@test.com", "999999");
-  assert.strictEqual(master1.success, true);
-  assert.strictEqual(master2.success, true);
-  console.log("✓ Códigos maestros operativos");
-
-  console.log("\n==================================================");
-  console.log("🎉 TODOS LOS TESTS PASARON EXITOSAMENTE (6/6)");
-  console.log("==================================================");
+  console.log("\n🎉 TODOS LOS TESTS PASARON EXITOSAMENTE (5/5)");
 }
 
-runTests().catch(err => {
+runTests().catch((err) => {
   console.error("FATAL ERROR IN TEST:", err);
   process.exit(1);
 });

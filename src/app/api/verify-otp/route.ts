@@ -4,7 +4,7 @@ import { verifyServerOtp, clearServerOtp } from "@/lib/serverOtpStore";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { email, code, action } = body;
+    const { email, code, action, otpTokens } = body;
 
     if (!email || typeof email !== "string") {
       return NextResponse.json(
@@ -28,7 +28,11 @@ export async function POST(req: NextRequest) {
     }
 
     const cleanCode = code.trim();
-    const result = verifyServerOtp(cleanEmail, cleanCode);
+    const safeTokens = Array.isArray(otpTokens)
+      ? otpTokens.filter((t) => typeof t === "string").slice(0, 10)
+      : undefined;
+
+    const result = verifyServerOtp(cleanEmail, cleanCode, safeTokens);
 
     if (!result.success) {
       return NextResponse.json(

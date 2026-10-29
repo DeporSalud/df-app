@@ -5,20 +5,49 @@ const SMTP_PORT = parseInt(process.env.SMTP_PORT || "465", 10);
 const SMTP_SECURE = process.env.SMTP_SECURE !== "false";
 const SMTP_USER = process.env.SMTP_USER || "registro@deporsalud.es";
 const SMTP_PASS = process.env.SMTP_PASS || "=l7p*H=jaj2X";
-const SMTP_FROM = process.env.SMTP_FROM || '"Dance Factory" <registro@deporsalud.es>';
+const SMTP_FROM = process.env.SMTP_FROM || '"Dance Factory Alcorcón" <registro@deporsalud.es>';
 
-const transporter = nodemailer.createTransport({
-  host: SMTP_HOST,
-  port: SMTP_PORT,
-  secure: SMTP_SECURE,
-  auth: {
-    user: SMTP_USER,
-    pass: SMTP_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false,
-  },
-});
+function createFreshTransporter() {
+  return nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 12000,
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+    tls: {
+      rejectUnauthorized: false,
+    },
+  });
+}
+
+async function sendMailWithRetry(mailOptions: nodemailer.SendMailOptions, maxAttempts = 2) {
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const tx = createFreshTransporter();
+    try {
+      const info = await tx.sendMail(mailOptions);
+      try {
+        tx.close();
+      } catch {}
+      return info;
+    } catch (err: any) {
+      lastError = err;
+      try {
+        tx.close();
+      } catch {}
+      console.warn(`[Mailer] Intento SMTP ${attempt}/${maxAttempts} falló para ${mailOptions.to}:`, err?.message || err);
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+  }
+  throw lastError;
+}
 
 export async function sendOtpEmail({
   email,
@@ -30,21 +59,25 @@ export async function sendOtpEmail({
   studentName?: string;
 }): Promise<{ success: boolean; messageId?: string; error?: string }> {
   try {
-    const formattedCode = code.split("").join(" ");
     const nameGreeting = studentName ? `Hola ${studentName},` : "Hola,";
 
-    const mailOptions = {
+    const mailOptions: nodemailer.SendMailOptions = {
       from: SMTP_FROM,
+      replyTo: SMTP_USER,
       to: email,
-      subject: `🔑 ${code} es tu código de acceso a Dance Factory`,
-      text: `Dance Factory Alcorcón\n\n${nameGreeting}\n\nTu código de verificación de un solo uso (OTP) es: ${code}\n\nEste código es válido durante 10 minutos. Introdúcelo en la aplicación para activar tu carnet digital y acceder a tus clases.\n\nSi no has solicitado este código, puedes ignorar este mensaje.\n\nDance Factory Alcorcón • Plaza El Tejar 2 / Paseo Castilla 21`,
+      subject: `Tu código de acceso a Dance Factory: ${code}`,
+      headers: {
+        "Auto-Submitted": "auto-generated",
+        "X-Auto-Response-Suppress": "All",
+      },
+      text: `Dance Factory Alcorcón\n\n${nameGreeting}\n\nTu código de acceso a la aplicación de alumnos es: ${code}\n\nEste código es válido durante 30 minutos. Introdúcelo en la aplicación para acceder a tu perfil y carnet digital.\n\nNota: Si has solicitado más de un código recientemente, cualquiera de los códigos recibidos en los últimos 30 minutos sigue siendo válido.\n\nSi no has solicitado este código, puedes ignorar este mensaje.\n\nDance Factory Alcorcón • Plaza El Tejar 2 / Paseo Castilla 21`,
       html: `
         <!DOCTYPE html>
         <html lang="es">
         <head>
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Código de Verificación - Dance Factory</title>
+          <title>Código de Acceso - Dance Factory</title>
         </head>
         <body style="margin: 0; padding: 0; background-color: #070b16; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #cbd5e1;">
           <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #070b16; padding: 30px 10px;">
@@ -65,9 +98,9 @@ export async function sendOtpEmail({
                   <!-- Main Content -->
                   <tr>
                     <td style="padding: 10px 28px 24px 28px; text-align: center;">
-                      <h1 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px;">Tu Código de Acceso OTP</h1>
+                      <h1 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px;">Tu Código de Acceso</h1>
                       <p style="margin: 0 0 24px 0; font-size: 14px; line-height: 1.5; color: #94a3b8;">
-                        ${nameGreeting} introduce el siguiente código de 6 dígitos en la aplicación para activar tu cuenta de alumno:
+                        ${nameGreeting} introduce el siguiente código de 6 dígitos en la aplicación para entrar a tu perfil de alumno:
                       </p>
 
                       <!-- 6-Digit Code Container -->
@@ -81,18 +114,15 @@ export async function sendOtpEmail({
                       <div style="background-color: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 12px 16px; margin-bottom: 20px; text-align: left;">
                         <table border="0" cellspacing="0" cellpadding="0" width="100%">
                           <tr>
-                            <td width="20" style="vertical-align: top; padding-right: 8px;">
-                              <span style="font-size: 14px;">⏱️</span>
-                            </td>
-                            <td style="font-size: 12px; color: #cbd5e1; line-height: 1.4;">
-                              Este código es de <strong>un solo uso</strong> y caduca en <strong>10 minutos</strong>. Por seguridad, no lo compartas con nadie.
+                            <td style="font-size: 12px; color: #cbd5e1; line-height: 1.5;">
+                              Este código es válido durante <strong>30 minutos</strong>. Si has pulsado «Reenviar» y recibes más de un correo, cualquiera de los códigos enviados en los últimos 30 minutos te permitirá acceder.
                             </td>
                           </tr>
                         </table>
                       </div>
 
                       <p style="margin: 0; font-size: 12px; color: #64748b; line-height: 1.4;">
-                        Si tú no has solicitado este código de registro, puedes desestimar este correo con total tranquilidad.
+                        Si tú no has solicitado este código de acceso, puedes ignorar este correo con total tranquilidad.
                       </p>
                     </td>
                   </tr>
@@ -118,7 +148,7 @@ export async function sendOtpEmail({
       `,
     };
 
-    const info = await transporter.sendMail(mailOptions);
+    const info = await sendMailWithRetry(mailOptions, 2);
     console.log(`[Mailer] ✅ Correo OTP enviado con éxito a ${email}. ID: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (error: any) {
@@ -247,7 +277,7 @@ export async function sendBonoExpiringEmail({
       `,
     };
 
-    const info = await transporter.sendMail(mailOptions);
+    const info = await sendMailWithRetry(mailOptions, 2);
     console.log(`[Mailer] ✅ Correo de aviso de caducidad enviado a ${email}. ID: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (error: any) {

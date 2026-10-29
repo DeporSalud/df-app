@@ -17,7 +17,8 @@ import {
   verifyOtpCode, 
   generateAndSendOtp, 
   getOtpCooldown, 
-  getActiveOtpCode 
+  getActiveOtpCode,
+  RESEND_COOLDOWN_SEC
 } from "@/lib/otpService";
 
 interface OtpVerificationModalProps {
@@ -27,6 +28,7 @@ interface OtpVerificationModalProps {
   onVerifyCode?: (code: string) => Promise<{ success: boolean; error?: string }>;
   title?: string;
   subtitle?: string;
+  initialCooldown?: number;
 }
 
 export default function OtpVerificationModal({
@@ -35,13 +37,14 @@ export default function OtpVerificationModal({
   onCancel,
   onVerifyCode,
   title = "Verificación por Correo",
-  subtitle = "Hemos enviado un código One Time PIN (OTP) de 6 dígitos a tu correo:"
+  subtitle = "Hemos enviado un código One Time PIN (OTP) de 6 dígitos a tu correo:",
+  initialCooldown
 }: OtpVerificationModalProps) {
   const [digits, setDigits] = useState<string[]>(["", "", "", "", "", ""]);
   const [errorMsg, setErrorMsg] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
-  const [cooldown, setCooldown] = useState(60);
+  const [cooldown, setCooldown] = useState(typeof initialCooldown === "number" ? initialCooldown : RESEND_COOLDOWN_SEC);
   const [isResending, setIsResending] = useState(false);
   const [hintCode, setHintCode] = useState<string | null>(null);
 
@@ -50,7 +53,13 @@ export default function OtpVerificationModal({
   // Initialize and check cooldown
   useEffect(() => {
     const { remainingSeconds } = getOtpCooldown(email);
-    setCooldown(remainingSeconds > 0 ? remainingSeconds : 60);
+    if (remainingSeconds > 0) {
+      setCooldown(remainingSeconds);
+    } else if (typeof initialCooldown === "number") {
+      setCooldown(initialCooldown);
+    } else {
+      setCooldown(RESEND_COOLDOWN_SEC);
+    }
 
     // Initial check for active code (for user demo convenience)
     const active = getActiveOtpCode(email);
@@ -155,7 +164,7 @@ export default function OtpVerificationModal({
 
     const res = await generateAndSendOtp(email);
     if (res.success) {
-      setCooldown(60);
+      setCooldown(RESEND_COOLDOWN_SEC);
       if (res.code) setHintCode(res.code);
     } else {
       setErrorMsg(res.error || "No se pudo reenviar el código. Inténtalo de nuevo.");
@@ -210,6 +219,9 @@ export default function OtpVerificationModal({
             <div className="py-1.5 px-3.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-xs font-mono font-bold text-[var(--color-secondary)] inline-block max-w-full truncate shadow-inner">
               {email}
             </div>
+            <p className="text-[11px] text-slate-400 leading-snug max-w-xs mx-auto pt-1">
+              Válido <strong>30 min</strong> • Revisa también <strong>Spam / Correo no deseado</strong> (especialmente en Hotmail/Outlook). Si pediste más de un código, cualquiera sigue siendo válido.
+            </p>
           </div>
 
           {/* Success Banner */}

@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { generateAndSendOtp, verifyOtpCode, clearActiveOtp } from "@/lib/otpService";
+import { generateAndSendOtp, verifyOtpCode, clearActiveOtp, canonicalizeClientEmail } from "@/lib/otpService";
 import { isRegularClassStudent, hasPaidSeasonMatricula } from "@/lib/matriculaService";
 import { subscribeSyncEvent } from "@/lib/syncEventBus";
 import {
@@ -584,6 +584,93 @@ export function StudentProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const resolveStudentByEmailInput = async (
+    emailInput: string
+  ): Promise<{ student: any | null; dbReachable: boolean }> => {
+    const cleanEmail = emailInput.trim().toLowerCase();
+    const lookupEmail = cleanEmail === "fran.sarciat@gmail.com" ? "fransarciat@gmail.com" : cleanEmail;
+    const canonicalTarget = canonicalizeClientEmail(lookupEmail);
+
+    const matchesStudentRow = (row: any): boolean => {
+      if (!row) return false;
+      const rowEmail = String(row.email || "").trim().toLowerCase();
+      if (rowEmail && (rowEmail === cleanEmail || rowEmail === lookupEmail || canonicalizeClientEmail(rowEmail) === canonicalTarget)) {
+        return true;
+      }
+      const rawDir = row.raw_direccion || row.direccion || "";
+      const alt = parseLinkedAltAuth(rawDir);
+      if (alt?.emails && alt.emails.some((e) => e === cleanEmail || canonicalizeClientEmail(e) === canonicalTarget)) {
+        return true;
+      }
+      return false;
+    };
+
+    const pickBestStudent = (rows: any[]): any | null => {
+      if (!rows || rows.length === 0) return null;
+      return (
+        rows.find(
+          (s) =>
+            (Array.isArray(s.alumnos_clases) && s.alumnos_clases.length > 0) ||
+            (Array.isArray(s.alumnos_clases_ids) && s.alumnos_clases_ids.length > 0) ||
+            (s.plan_activo && !String(s.plan_activo).toLowerCase().includes("sin plan"))
+        ) || rows[0]
+      );
+    };
+
+    let dbReachable = false;
+    try {
+      const { data: exactList, error: exactErr } = await supabase
+        .from("alumnos")
+        .select("*, alumnos_clases(*)")
+        .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail},direccion.ilike.%${cleanEmail}%`);
+
+      if (!exactErr) {
+        dbReachable = true;
+        if (exactList && exactList.length > 0) {
+          return { student: pickBestStudent(exactList), dbReachable: true };
+        }
+
+        // Gmail/Googlemail dot-insensitive & DF_ALT_AUTH scan when direct ilike didn't match (e.g. cristinacortesb@gmail.com -> cristina.cortesb@gmail.com)
+        if (canonicalTarget.endsWith("@gmail.com")) {
+          const { data: gmailRows, error: gmailErr } = await supabase
+            .from("alumnos")
+            .select("*, alumnos_clases(*)")
+            .or("email.ilike.%@gmail.com,email.ilike.%@googlemail.com,direccion.ilike.%DF_ALT_AUTH%");
+
+          if (!gmailErr && gmailRows) {
+            const matchedGmail = gmailRows.filter(matchesStudentRow);
+            if (matchedGmail.length > 0) {
+              return { student: pickBestStudent(matchedGmail), dbReachable: true };
+            }
+          }
+        }
+      }
+    } catch (dbErr) {
+      console.warn("[StudentContext] Aviso al consultar Supabase por email:", dbErr);
+    }
+
+    // Fallback to in-memory / localStorage cache if DB was unreachable or still syncing
+    const inMemoryMatches = students.filter(matchesStudentRow);
+    if (inMemoryMatches.length > 0) {
+      return { student: pickBestStudent(inMemoryMatches), dbReachable };
+    }
+
+    if (typeof window !== "undefined") {
+      try {
+        const cachedRaw = localStorage.getItem("df_alumnos_cache");
+        if (cachedRaw) {
+          const list: Student[] = JSON.parse(cachedRaw);
+          const cachedMatches = list.filter(matchesStudentRow);
+          if (cachedMatches.length > 0) {
+            return { student: pickBestStudent(cachedMatches), dbReachable };
+          }
+        }
+      } catch {}
+    }
+
+    return { student: null, dbReachable };
+  };
+
   const verifyStudentWithOtp = async (email: string, code: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const cleanEmail = email.trim().toLowerCase();
@@ -596,63 +683,29 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       // Limpiar OTP tanto en local como en servidor
       await clearActiveOtp(cleanEmail);
 
-      let targetStudent: Student | null = null;
-      const lookupEmail = cleanEmail === "fran.sarciat@gmail.com" ? "fransarciat@gmail.com" : cleanEmail;
-
-      // 1. Intentar actualizar / consultar en Supabase si está disponible
-      try {
-        const { data: updatedList } = await supabase
-          .from("alumnos")
-          .update({ estado: "Activo" })
-          .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail}`)
-          .select("*, alumnos_clases(*)");
-
-        if (updatedList && updatedList.length > 0) {
-          targetStudent = updatedList.find(s => 
-            (Array.isArray(s.alumnos_clases) && s.alumnos_clases.length > 0) ||
-            (s.plan_activo && !s.plan_activo.toLowerCase().includes("sin plan"))
-          ) || updatedList[0];
-        } else {
-          const { data: foundList } = await supabase
-            .from("alumnos")
-            .select("*, alumnos_clases(*)")
-            .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail},direccion.ilike.%${cleanEmail}%`);
-          if (foundList && foundList.length > 0) {
-            targetStudent = foundList.find(s => 
-              (Array.isArray(s.alumnos_clases) && s.alumnos_clases.length > 0) ||
-              (s.plan_activo && !s.plan_activo.toLowerCase().includes("sin plan"))
-            ) || foundList[0];
-          } else {
-            // Buscar por nombre o usuario de correo (ej. Olivia, Anna, etc.)
-            const username = cleanEmail.split("@")[0].replace(/[._-]/g, " ").trim();
-            if (username.length >= 3) {
-              const { data: nameMatches } = await supabase
-                .from("alumnos")
-                .select("*")
-                .ilike("nombre_completo", `%${username}%`)
-                .limit(1);
-              if (nameMatches && nameMatches.length > 0) {
-                targetStudent = nameMatches[0];
-              }
-            }
-          }
-        }
-      } catch (dbErr) {
-        console.warn("[StudentContext] Aviso al conectar con base de datos:", dbErr);
-      }
+      const { student: matchedStudent } = await resolveStudentByEmailInput(cleanEmail);
+      let targetStudent: any | null = matchedStudent;
 
       if (!targetStudent && (cleanEmail.includes("caixa") || cleanEmail.includes("auditor") || cleanEmail.includes("fran") || cleanEmail.includes("sarciat"))) {
         targetStudent = students.find(s => s.id === "demo_fran" || s.email?.includes("fransarciat")) || FALLBACK_STUDENTS[0];
       }
 
       if (targetStudent) {
-        // Asignar carnet de acceso NFC digital de 4 dígitos si no lo tiene
+        // Asegurar estado Activo y carnet NFC de 4 dígitos si procede
+        const updates: Record<string, any> = {};
+        if (targetStudent.estado !== "Activo" && targetStudent.id !== "demo_fran") {
+          updates.estado = "Activo";
+          targetStudent.estado = "Activo";
+        }
         if (!targetStudent.nfc_token) {
           const generatedCard = Math.floor(1000 + Math.random() * 9000).toString();
-          try {
-            await supabase.from("alumnos").update({ nfc_token: generatedCard }).eq("id", targetStudent.id);
-          } catch {}
+          updates.nfc_token = generatedCard;
           targetStudent.nfc_token = generatedCard;
+        }
+        if (Object.keys(updates).length > 0 && targetStudent.id !== "demo_fran") {
+          try {
+            await supabase.from("alumnos").update(updates).eq("id", targetStudent.id);
+          } catch {}
         }
 
         if (typeof window !== "undefined") {
@@ -667,36 +720,8 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         return { success: true };
       }
 
-      // 2. Comprobar en caché local de alumnos (si Supabase los había cargado antes)
-      let cachedMatch: Student | null = null;
-      if (typeof window !== "undefined") {
-        try {
-          const cachedRaw = localStorage.getItem("df_alumnos_cache");
-          if (cachedRaw) {
-            const list: Student[] = JSON.parse(cachedRaw);
-            cachedMatch = list.find(s => s.email?.toLowerCase() === cleanEmail) || null;
-          }
-        } catch {}
-      }
-
-      const match = cachedMatch || students.find(s => s.email?.toLowerCase() === cleanEmail);
-      if (match) {
-        if (typeof window !== "undefined") {
-          localStorage.setItem("df_auth_role", "alumno");
-          localStorage.setItem("df_student_session_id", match.id);
-          localStorage.setItem("df_current_student_data", JSON.stringify(match));
-        }
-        setUserRoleState("alumno");
-        setCurrentStudentIdState(match.id);
-        setIsAuthenticated(true);
-        return { success: true };
-      }
-
-      // 3. Blindaje contra cuentas fantasma: intentar resolver alumno existente antes de rechazar
-      // Buscar por teléfono (últimos 9 dígitos) o DNI si el input contenía dígitos
+      // Blindaje adicional por teléfono (últimos 9 dígitos) o DNI si el input contenía dígitos
       const digitsOnly = cleanEmail.replace(/\D/g, "");
-      let resolvedStudent: Student | null = null;
-
       if (digitsOnly.length >= 8) {
         try {
           const { data: altMatches } = await supabase
@@ -705,27 +730,25 @@ export function StudentProvider({ children }: { children: ReactNode }) {
             .or(`telefono.ilike.%${digitsOnly.slice(-9)}%,dni.ilike.%${digitsOnly}%`)
             .limit(1);
           if (altMatches && altMatches.length > 0) {
-            resolvedStudent = altMatches[0];
+            const resolvedStudent = altMatches[0];
+            if (typeof window !== "undefined") {
+              localStorage.setItem("df_auth_role", "alumno");
+              localStorage.setItem("df_student_session_id", resolvedStudent.id);
+              localStorage.setItem("df_current_student_data", JSON.stringify(resolvedStudent));
+            }
+            setUserRoleState("alumno");
+            setCurrentStudentIdState(resolvedStudent.id);
+            setIsAuthenticated(true);
+            await fetchStudents();
+            return { success: true };
           }
         } catch {}
-      }
-
-      if (resolvedStudent) {
-        if (typeof window !== "undefined") {
-          localStorage.setItem("df_auth_role", "alumno");
-          localStorage.setItem("df_student_session_id", resolvedStudent.id);
-          localStorage.setItem("df_current_student_data", JSON.stringify(resolvedStudent));
-        }
-        setUserRoleState("alumno");
-        setCurrentStudentIdState(resolvedStudent.id);
-        setIsAuthenticated(true);
-        return { success: true };
       }
 
       // Si no existe ningún alumno registrado, NO insertar cuentas fantasma "Sin Plan Activo" en Supabase.
       return {
         success: false,
-        error: "No se encontró ninguna ficha de alumno registrada con este correo o documento. Por favor, completa tu registro o consulta en recepción."
+        error: "No se encontró ninguna ficha de alumno registrada con este correo. Si se registró el email de tu padre/madre o tutor, usa ese correo o consulta en Recepción."
       };
     } catch (err: any) {
       return { success: false, error: err.message || "Error al verificar el código OTP." };
@@ -735,7 +758,43 @@ export function StudentProvider({ children }: { children: ReactNode }) {
   const requestStudentOtp = async (email: string): Promise<{ success: boolean; code?: string; error?: string }> => {
     try {
       const cleanEmail = email.trim().toLowerCase();
-      const res = await generateAndSendOtp(cleanEmail);
+      const domainPart = cleanEmail.split("@")[1] || "";
+
+      const domainTypos: Record<string, string> = {
+        "gamail.com": "gmail.com",
+        "gamil.com": "gmail.com",
+        "gmal.com": "gmail.com",
+        "gnail.com": "gmail.com",
+        "gmail.es": "gmail.com",
+        "hotmal.com": "hotmail.com",
+        "hotmai.com": "hotmail.com",
+        "hormail.com": "hotmail.com",
+        "outlok.com": "outlook.com",
+      };
+      if (domainTypos[domainPart]) {
+        return {
+          success: false,
+          error: `Parece que hay una errata en el correo («@${domainPart}»). ¿Querías escribir «@${domainTypos[domainPart]}»?`,
+        };
+      }
+
+      const isDemoBypass =
+        cleanEmail.includes("caixa") ||
+        cleanEmail.includes("auditor") ||
+        cleanEmail.includes("fran") ||
+        cleanEmail.includes("sarciat");
+
+      const { student: matchedStudent, dbReachable } = await resolveStudentByEmailInput(cleanEmail);
+
+      if (!matchedStudent && !isDemoBypass && dbReachable) {
+        return {
+          success: false,
+          error:
+            "No figura ninguna ficha de alumno con ese correo. Si en tu matrícula se registró el correo de tu padre/madre o tutor, introduce ese correo; si eres nuevo alumno pulsa «Regístrate aquí» o consúltalo en Recepción.",
+        };
+      }
+
+      const res = await generateAndSendOtp(cleanEmail, matchedStudent?.nombre_completo);
       return res;
     } catch (err: any) {
       return { success: false, error: err.message || "Error al enviar el código OTP." };

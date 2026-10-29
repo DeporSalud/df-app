@@ -77,6 +77,7 @@ export default function LoginPage() {
 
   // Student Form (100% Passwordless OTP)
   const [studentEmail, setStudentEmail] = useState("");
+  const [otpDirectEntry, setOtpDirectEntry] = useState(false);
   const [otpModalEmail, setOtpModalEmail] = useState<string | null>(() => {
     if (typeof window !== "undefined") {
       return sessionStorage.getItem("df_pending_otp_email") || null;
@@ -181,6 +182,7 @@ export default function LoginPage() {
     const res = await requestStudentOtp(clean);
 
     if (res.success) {
+      setOtpDirectEntry(false);
       if (typeof window !== "undefined") {
         sessionStorage.setItem("df_pending_otp_email", clean);
       }
@@ -189,6 +191,21 @@ export default function LoginPage() {
       setErrorMsg(res.error || "No se pudo solicitar el código OTP. Comprueba que el correo sea correcto.");
     }
     setIsSubmitting(false);
+  };
+
+  // Allow entering an already received 6-digit email code or Reception Counter Code without forcing a new email send
+  const handleAlreadyHaveCode = () => {
+    setErrorMsg("");
+    const clean = studentEmail.trim().toLowerCase();
+    if (!clean || !clean.includes("@")) {
+      setErrorMsg("Introduce primero tu correo electrónico arriba y luego pulsa «Ya tengo un código de 6 dígitos».");
+      return;
+    }
+    setOtpDirectEntry(true);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("df_pending_otp_email", clean);
+    }
+    setOtpModalEmail(clean);
   };
 
   // Handle Teacher PIN Login for selected teacher
@@ -296,8 +313,13 @@ export default function LoginPage() {
     return (
       <OtpVerificationModal
         email={otpModalEmail}
-        title="Acceso por One Time PIN"
-        subtitle="Introduce el código de 6 dígitos enviado a tu correo electrónico:"
+        title="Acceso por Código de 6 Dígitos"
+        subtitle={
+          otpDirectEntry
+            ? "Introduce el código de 6 dígitos recibido en tu correo o facilitado en Recepción:"
+            : "Introduce el código de 6 dígitos enviado a tu correo electrónico:"
+        }
+        initialCooldown={otpDirectEntry ? 0 : undefined}
         onVerifyCode={async (code) => {
           return await verifyStudentWithOtp(otpModalEmail, code);
         }}
@@ -314,6 +336,7 @@ export default function LoginPage() {
           if (typeof window !== "undefined") {
             sessionStorage.removeItem("df_pending_otp_email");
           }
+          setOtpDirectEntry(false);
           setOtpModalEmail(null);
           setIsSubmitting(false);
         }}
@@ -445,6 +468,15 @@ export default function LoginPage() {
                       <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
                     </>
                   )}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={handleAlreadyHaveCode}
+                  className="w-full py-2.5 px-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-[var(--color-border)] text-slate-300 hover:text-white text-[11px] font-semibold transition-all cursor-pointer"
+                >
+                  ¿Ya tienes un código de 6 dígitos (correo o Recepción)? Introdúcelo aquí
                 </button>
               </form>
 

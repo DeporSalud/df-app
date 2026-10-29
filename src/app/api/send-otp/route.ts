@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendOtpEmail } from "@/lib/mailer";
 import { storeServerOtp } from "@/lib/serverOtpStore";
-import { createClient } from "@supabase/supabase-js";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wjnoawmefdurqqjwqdmi.supabase.co";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "sb_publishable_dWudcdKMOeKH22g0IRKV7w_bxWNtEh2";
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,7 +14,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!code || typeof code !== "string" || code.length !== 6) {
+    if (!code || typeof code !== "string" || !/^\d{6}$/.test(code.trim())) {
       return NextResponse.json(
         { success: false, error: "Código OTP inválido (debe tener 6 dígitos)." },
         { status: 400 }
@@ -29,10 +24,10 @@ export async function POST(req: NextRequest) {
     const cleanEmail = email.trim().toLowerCase();
     const cleanCode = code.trim();
 
-    // 1. Guardar código en el almacén de seguridad del servidor
-    storeServerOtp(cleanEmail, cleanCode);
+    // 1. Guardar código en el almacén rolling del servidor + generar firma HMAC sin estado
+    const { otpToken, expiresAt } = storeServerOtp(cleanEmail, cleanCode);
 
-    // 2. Enviar correo usando Hostinger SMTP oficial
+    // 2. Enviar correo usando Hostinger SMTP oficial (con reintento automático)
     const result = await sendOtpEmail({
       email: cleanEmail,
       code: cleanCode,
@@ -41,7 +36,12 @@ export async function POST(req: NextRequest) {
 
     if (!result.success) {
       return NextResponse.json(
-        { success: false, error: result.error || "No se pudo enviar el correo electrónico." },
+        {
+          success: false,
+          error:
+            result.error ||
+            "No se pudo entregar el correo en este momento. Inténtalo de nuevo o pide tu código de acceso en Recepción.",
+        },
         { status: 500 }
       );
     }
@@ -50,6 +50,8 @@ export async function POST(req: NextRequest) {
       success: true,
       message: `Código enviado con éxito a ${cleanEmail}`,
       messageId: result.messageId,
+      otpToken,
+      expiresAt,
     });
   } catch (error: any) {
     console.error("[API /api/send-otp] Error en el servidor:", error);
