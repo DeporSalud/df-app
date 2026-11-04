@@ -1085,10 +1085,10 @@ function ClasesContent() {
             <select
               value={selectedSede}
               onChange={(e) => setSelectedSede(e.target.value)}
-              className="text-xs font-bold bg-[var(--color-secondary)]/15 text-[var(--color-secondary)] border border-[var(--color-secondary)]/40 rounded-xl px-3 py-2 outline-none cursor-pointer shadow-md hover:bg-[var(--color-secondary)]/25 transition-all shrink-0 max-w-[170px] truncate"
+              className="text-xs font-bold bg-[var(--color-secondary)]/15 text-[var(--color-secondary)] border border-[var(--color-secondary)]/40 rounded-xl px-2.5 py-2 outline-none cursor-pointer shadow-md hover:bg-[var(--color-secondary)]/25 transition-all shrink-0"
             >
-              <option value="tejar" className="bg-[#0f172a] text-white">Studio 1 Plaza El Tejar</option>
-              <option value="castilla" className="bg-[#0f172a] text-white">Studio 2 Paseo Castilla</option>
+              <option value="tejar" className="bg-[#0f172a] text-white">Studio 1 (El Tejar)</option>
+              <option value="castilla" className="bg-[#0f172a] text-white">Studio 2 (Castilla)</option>
             </select>
           )}
           {activeTab === "openclass" && (
