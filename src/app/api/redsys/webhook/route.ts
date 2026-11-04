@@ -181,9 +181,7 @@ export async function POST(req: NextRequest) {
       const metodoFinal = payType.toLowerCase().includes("bizum") || payType === "z" ? "Bizum" : "TPV";
       const bonoLabel = bonoName || "Bono de Clases";
       const categoriaFinal = bonoLabel.toLowerCase().includes("suelta") ? "clase_suelta" : "bono";
-      const sedeFinal = ["castilla", "alcorcon", "studio 2"].includes(String(student?.sede || "").toLowerCase().trim())
-        ? "castilla"
-        : "tejar";
+      const sedeFinal = "castilla";
 
       const buildCloudPagoRecord = (resolvedStudentId?: string | null, resolvedStudent?: any) => ({
         id: txId,

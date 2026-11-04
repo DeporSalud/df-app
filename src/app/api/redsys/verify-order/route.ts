@@ -137,9 +137,7 @@ export async function GET(req: NextRequest) {
               const chargeMatricula = metadata.isFirstBono === "true" || parseFloat(metadata.matriculaCost || "0") > 0;
               const metodoFinal = payType.toLowerCase().includes("bizum") || payType === "z" ? "Bizum" : "TPV";
               const categoriaFinal = bonoName.toLowerCase().includes("suelta") ? "clase_suelta" : "bono";
-              const sedeFinal = ["castilla", "alcorcon", "studio 2"].includes(String(studentToUpdate?.sede || "").toLowerCase().trim())
-                ? "castilla"
-                : "tejar";
+              const sedeFinal = "castilla";
 
               const newPagoObj = {
                 id: txId,
