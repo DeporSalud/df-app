@@ -12,6 +12,11 @@ import { QRCodeCanvas } from "qrcode.react";
 import { logActivity } from "@/lib/activityLogger";
 import AppModal, { ModalState } from "@/components/AppModal";
 import { useStudent, Teacher } from "@/context/StudentContext";
+import {
+  getAllTeachersInSchedule,
+  getTeacherForClassDate,
+  isClassActiveOnDate,
+} from "@/lib/classScheduleUtils";
 import { 
   getUpcomingCalendarDates, 
   CalendarDayItem, 
@@ -314,10 +319,18 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       const { data: allClases } = await supabase.from("clases_cuadrante").select("*");
       if (allClases && allClases.length > 0) {
         // Teacher's assigned classes
-        const myClases = allClases.filter(c => {
-          const profNorm = normalizeText(c.profesor);
-          return profNorm.includes(normName) || normName.includes(profNorm);
-        });
+        const myClases = allClases
+          .filter(c => {
+            return getAllTeachersInSchedule(c).some((tName) => {
+              const profNorm = normalizeText(tName);
+              return Boolean(profNorm && (profNorm.includes(normName) || normName.includes(profNorm)));
+            });
+          })
+          .map(c => ({
+            ...c,
+            raw_profesor: c.profesor,
+            profesor: getTeacherForClassDate(c)
+          }));
 
         myClases.sort((a, b) => {
           const dayDiff = getDayOrder(a.dia_semana) - getDayOrder(b.dia_semana);
@@ -1989,9 +2002,11 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
 
                 {allOpenClasses.filter(c => {
                   if (normalizeDay(c.dia_semana) !== normalizeDay(selectedCalendarDay.dayName)) return false;
+                  if (!isClassActiveOnDate(c, selectedCalendarDay.dateISO)) return false;
+                  const teacherForDay = getTeacherForClassDate(c, selectedCalendarDay.dateISO);
                   const isRotativa = 
                     c.nombre_clase?.toUpperCase().includes("ROTAT") || 
-                    c.profesor?.toUpperCase().includes("ROTAT") ||
+                    teacherForDay?.toUpperCase().includes("ROTAT") ||
                     (c.tipo_clase || "").toUpperCase().includes("ROTAT");
                   if (isRotativa) {
                     const selectedDate = new Date(selectedCalendarDay.dateISO + "T00:00:00");
@@ -2010,9 +2025,11 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                     {allOpenClasses
                       .filter(c => {
                         if (normalizeDay(c.dia_semana) !== normalizeDay(selectedCalendarDay.dayName)) return false;
+                        if (!isClassActiveOnDate(c, selectedCalendarDay.dateISO)) return false;
+                        const teacherForDay = getTeacherForClassDate(c, selectedCalendarDay.dateISO);
                         const isRotativa = 
                           c.nombre_clase?.toUpperCase().includes("ROTAT") || 
-                          c.profesor?.toUpperCase().includes("ROTAT") ||
+                          teacherForDay?.toUpperCase().includes("ROTAT") ||
                           (c.tipo_clase || "").toUpperCase().includes("ROTAT");
                         if (isRotativa) {
                           const selectedDate = new Date(selectedCalendarDay.dateISO + "T00:00:00");
@@ -2058,7 +2075,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                                 {clase.nombre_clase}
                               </h3>
                               <p className="text-[11px] text-slate-400">
-                                Profesor/a titular: <strong className="text-white">{clase.profesor}</strong> • {clase.sede === "tejar" ? "Studio 1" : "Studio 2"} • {clase.sala || "Sala Principal"}
+                                Profesor/a titular: <strong className="text-white">{getTeacherForClassDate(clase, selectedCalendarDay.dateISO)}</strong> • {clase.sede === "tejar" ? "Studio 1" : "Studio 2"} • {clase.sala || "Sala Principal"}
                               </p>
                             </div>
 

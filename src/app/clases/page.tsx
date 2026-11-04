@@ -33,6 +33,11 @@ import {
 import Link from "next/link";
 import { supabase } from "@/lib/supabase/client";
 import { useRouter, useSearchParams } from "next/navigation";
+import {
+  isClassActiveOnDate,
+  isSingleDateClassExpired,
+  getTeacherForClassDate,
+} from "@/lib/classScheduleUtils";
 import { useStudent } from "@/context/StudentContext";
 import AppModal, { ModalState } from "@/components/AppModal";
 import { logActivity } from "@/lib/activityLogger";
@@ -258,18 +263,24 @@ function ClasesContent() {
       const { data: regClasses } = await regQuery;
       if (regClasses && regClasses.length > 0) {
         allSedeClassesRef.current[selectedSede] = regClasses;
-        const regularesList = regClasses.filter(c => 
-          normalizeDay(c.dia_semana) === normalizeDay(selectedDay) &&
-          !c.nombre_clase.toUpperCase().includes("OPEN CLASS") &&
-          !c.nombre_clase.toUpperCase().includes("FORMACI")
-        );
+        const regularesList = regClasses
+          .filter(c => 
+            normalizeDay(c.dia_semana) === normalizeDay(selectedDay) &&
+            !isSingleDateClassExpired(c) &&
+            !c.nombre_clase.toUpperCase().includes("OPEN CLASS") &&
+            !c.nombre_clase.toUpperCase().includes("FORMACI")
+          )
+          .map(c => ({ ...c, raw_profesor: c.profesor, profesor: getTeacherForClassDate(c) }));
         setClases(regularesList);
       } else if (allSedeClassesRef.current[selectedSede]) {
-        const regularesList = allSedeClassesRef.current[selectedSede].filter(c => 
-          normalizeDay(c.dia_semana) === normalizeDay(selectedDay) &&
-          !c.nombre_clase.toUpperCase().includes("OPEN CLASS") &&
-          !c.nombre_clase.toUpperCase().includes("FORMACI")
-        );
+        const regularesList = allSedeClassesRef.current[selectedSede]
+          .filter(c => 
+            normalizeDay(c.dia_semana) === normalizeDay(selectedDay) &&
+            !isSingleDateClassExpired(c) &&
+            !c.nombre_clase.toUpperCase().includes("OPEN CLASS") &&
+            !c.nombre_clase.toUpperCase().includes("FORMACI")
+          )
+          .map(c => ({ ...c, raw_profesor: c.profesor, profesor: getTeacherForClassDate(c) }));
         setClases(regularesList);
       }
 
@@ -312,11 +323,14 @@ function ClasesContent() {
   // Instant in-memory filter when selected day or sede changes
   useEffect(() => {
     if (allSedeClassesRef.current[selectedSede]) {
-      const filtered = allSedeClassesRef.current[selectedSede].filter(c => 
-        normalizeDay(c.dia_semana) === normalizeDay(selectedDay) &&
-        !c.nombre_clase.toUpperCase().includes("OPEN CLASS") &&
-        !c.nombre_clase.toUpperCase().includes("FORMACI")
-      );
+      const filtered = allSedeClassesRef.current[selectedSede]
+        .filter(c => 
+          normalizeDay(c.dia_semana) === normalizeDay(selectedDay) &&
+          !isSingleDateClassExpired(c) &&
+          !c.nombre_clase.toUpperCase().includes("OPEN CLASS") &&
+          !c.nombre_clase.toUpperCase().includes("FORMACI")
+        )
+        .map(c => ({ ...c, raw_profesor: c.profesor, profesor: getTeacherForClassDate(c) }));
       setClases(filtered);
     }
   }, [selectedDay, selectedSede]);
@@ -328,25 +342,33 @@ function ClasesContent() {
   // Filter Open Classes for the selected calendar day (Always Studio 2, memoized)
   const openClassesForSelectedDay = useMemo(() => {
     const list = openClasses.length > 0 ? openClasses : DEFAULT_STUDIO2_OPEN_CLASSES;
-    return list.filter(c => {
-      if (normalizeDay(c.dia_semana) !== normalizeDay(selectedCalendarDay.dayName)) return false;
+    return list
+      .filter(c => {
+        if (normalizeDay(c.dia_semana) !== normalizeDay(selectedCalendarDay.dayName)) return false;
+        if (!isClassActiveOnDate(c, selectedCalendarDay.dateISO)) return false;
 
-      // Thursday Rotativas do not appear until October 2026
-      const isRotativa = 
-        c.nombre_clase?.toUpperCase().includes("ROTAT") || 
-        c.profesor?.toUpperCase().includes("ROTAT") ||
-        (c.tipo_clase || "").toUpperCase().includes("ROTAT");
+        const cleanTeacher = getTeacherForClassDate(c, selectedCalendarDay.dateISO);
+        // Thursday Rotativas do not appear until October 2026
+        const isRotativa = 
+          c.nombre_clase?.toUpperCase().includes("ROTAT") || 
+          cleanTeacher?.toUpperCase().includes("ROTAT") ||
+          (c.tipo_clase || "").toUpperCase().includes("ROTAT");
 
-      if (isRotativa) {
-        const selectedDate = new Date(selectedCalendarDay.dateISO + "T00:00:00");
-        const octoberStart = new Date("2026-10-01T00:00:00");
-        if (selectedDate < octoberStart) {
-          return false;
+        if (isRotativa) {
+          const selectedDate = new Date(selectedCalendarDay.dateISO + "T00:00:00");
+          const octoberStart = new Date("2026-10-01T00:00:00");
+          if (selectedDate < octoberStart) {
+            return false;
+          }
         }
-      }
 
-      return true;
-    });
+        return true;
+      })
+      .map(c => ({
+        ...c,
+        raw_profesor: c.raw_profesor ?? c.profesor,
+        profesor: getTeacherForClassDate(c, selectedCalendarDay.dateISO)
+      }));
   }, [openClasses, selectedCalendarDay]);
 
   const handleOpenBookingModal = (clase: any) => {

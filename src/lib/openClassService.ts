@@ -2,6 +2,7 @@ import { supabase } from "@/lib/supabase/client";
 import { getMadridHoursRemaining, getMadridDayRangeUTC, toMadridDate } from "@/lib/timezones";
 import { publishSyncEvent } from "./syncEventBus";
 import { logActivity } from "@/lib/activityLogger";
+import { getTeacherForClassDate } from "@/lib/classScheduleUtils";
 export function isTeacherProfile(student?: any, emailOrId?: string, userRole?: string): boolean {
   if (!student && !emailOrId && !userRole) return false;
   const plan = (student?.plan_activo || "").toLowerCase();
@@ -532,7 +533,7 @@ export function crearReservaOpenClass(data: {
     alumno_plan: data.alumno_plan,
     clase_id: classUUID,
     nombre_clase: data.clase.nombre_clase,
-    profesor: data.clase.profesor,
+    profesor: getTeacherForClassDate(data.clase, cleanISO),
     sede: normalizeSede(data.clase.sede || "castilla"),
     sala: data.clase.sala || "Sala 1",
     fecha_iso: cleanISO,
@@ -1180,7 +1181,7 @@ export async function syncReservasFromSupabase(): Promise<OpenClassReserva[]> {
         alumno_plan: a.plan_activo || "Bono Open Class",
         clase_id: normClassId,
         nombre_clase: c.nombre_clase || "OPEN CLASS",
-        profesor: c.profesor || "",
+        profesor: getTeacherForClassDate(c, fechaISO),
         sede: normalizeSede(c.sede || "castilla"),
         sala: c.sala || "Sala 1",
         fecha_iso: fechaISO,

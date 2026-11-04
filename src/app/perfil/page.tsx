@@ -8,6 +8,7 @@ import { useStudent } from "@/context/StudentContext";
 import { supabase } from "@/lib/supabase/client";
 import StudentBottomNav from "@/components/StudentBottomNav";
 import { formatSedeName } from "@/lib/openClassService";
+import { getTeacherForClassDate } from "@/lib/classScheduleUtils";
 
 export default function PerfilPage() {
   const router = useRouter();
@@ -294,7 +295,7 @@ export default function PerfilPage() {
                         {item.clases_cuadrante?.nombre_clase || "Clase Presencial"}
                       </strong>
                       <span className="text-[10px] text-slate-400">
-                        {item.clases_cuadrante?.profesor ? "Prof. " + item.clases_cuadrante.profesor : "Dance Factory"}
+                        {item.clases_cuadrante?.profesor ? "Prof. " + getTeacherForClassDate(item.clases_cuadrante, item.fecha_hora) : "Dance Factory"}
                       </span>
                     </div>
                     <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">

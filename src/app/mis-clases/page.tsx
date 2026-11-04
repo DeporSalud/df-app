@@ -23,6 +23,7 @@ import {
 import Link from "next/link";
 import { supabase } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import { getTeacherForClassDate } from "@/lib/classScheduleUtils";
 import { useStudent } from "@/context/StudentContext";
 import AppModal, { ModalState } from "@/components/AppModal";
 import { logActivity } from "@/lib/activityLogger";
@@ -364,7 +365,7 @@ export default function MisClasesPage() {
                                 {reserva.nombre_clase}
                               </h3>
                               <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                                Profesor/a: <strong className="text-white">{reserva.profesor}</strong>
+                                Profesor/a: <strong className="text-white">{getTeacherForClassDate(reserva, reserva.fecha_iso)}</strong>
                               </p>
                             </div>
 
@@ -446,7 +447,7 @@ export default function MisClasesPage() {
                               {clase.nombre_clase}
                             </h3>
                             <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                              Profesor/a: <strong className="text-white">{clase.profesor}</strong>
+                              Profesor/a: <strong className="text-white">{getTeacherForClassDate(clase)}</strong>
                             </p>
                           </div>
 
