@@ -9,6 +9,9 @@ import {
 import { createClient } from "@supabase/supabase-js";
 import { isPromoSeptiembreBono, getCurrentSeason, addOneCalendarMonthMadrid } from "@/lib/matriculaService";
 import { withPaymentFulfillmentLock, computeNewBonoBalance } from "@/lib/paymentFulfillmentLock";
+import { parseStudentPagosMeta, upsertStudentPagoInDireccion } from "@/lib/teacherRegistryService";
+
+const FALLBACK_LEDGER_ROW_ID = "7a101100-0000-4000-a000-000000001011";
 
 const supabaseUrl =
   process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wjnoawmefdurqqjwqdmi.supabase.co";
@@ -83,22 +86,6 @@ export async function POST(req: NextRequest) {
     }
 
     await withPaymentFulfillmentLock(`redsys:${order}`, async () => {
-      // 2.1 Evitar duplicados (Idempotencia)
-      try {
-        const { data: existingPago } = await supabase
-          .from("pagos")
-          .select("id")
-          .ilike("numero_recibo", `%${order}%`)
-          .maybeSingle();
-
-        if (existingPago) {
-          console.log(`[Redsys Webhook] ⚠️ Pedido ${order} ya fue procesado con anterioridad. Confirmando 200 OK sin duplicar saldo.`);
-          return;
-        }
-      } catch (checkDupErr) {
-        console.warn("[Redsys Webhook] Warning comprobando duplicados:", checkDupErr);
-      }
-
       // 3. Extraer metadatos del alumno y bono desde Ds_MerchantData
       let metadata: any = {};
       if (params.Ds_MerchantData) {
@@ -139,7 +126,7 @@ export async function POST(req: NextRequest) {
       if (studentId && isValidUUID(studentId)) {
         const { data } = await supabase
           .from("alumnos")
-          .select("id, nombre_completo, email, clases_restantes, plan_activo, creado_en")
+          .select("*")
           .eq("id", studentId)
           .maybeSingle();
         student = data;
@@ -148,11 +135,20 @@ export async function POST(req: NextRequest) {
       if (!student && studentEmail) {
         const { data } = await supabase
           .from("alumnos")
-          .select("id, nombre_completo, email, clases_restantes, plan_activo, creado_en")
+          .select("*")
           .ilike("email", studentEmail.trim().toLowerCase())
           .maybeSingle();
         student = data;
         if (student) targetStudentId = student.id;
+      }
+
+      // 4.1 Evitar duplicados (Idempotencia en nube vía DF_PAGOS en alumnos.direccion)
+      const receiptCode = `TPV-${order}`;
+      const txId = `redsys_${order}`;
+      const existingStudentPagos = parseStudentPagosMeta(student?.direccion);
+      if (existingStudentPagos.some((p: any) => p.numero_recibo === receiptCode || p.id === txId)) {
+        console.log(`[Redsys Webhook] ⚠️ Pedido ${order} ya fue procesado con anterioridad. Confirmando 200 OK sin duplicar saldo.`);
+        return;
       }
 
       const isPromo =
@@ -164,18 +160,64 @@ export async function POST(req: NextRequest) {
         ? "2026-09-30T23:59:59.000Z"
         : addOneCalendarMonthMadrid(new Date()).toISOString();
 
+      const nowDate = new Date();
+      const purchaseNowISO = nowDate.toISOString();
+      const fechaCorta = nowDate.toLocaleDateString("es-ES", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        timeZone: "Europe/Madrid",
+      });
+      const horaCorta = nowDate.toLocaleTimeString("es-ES", {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Europe/Madrid",
+      });
+      const madridParts = fechaCorta.split("/");
+      const periodoMes = madridParts.length === 3 ? `${madridParts[2]}-${madridParts[1]}` : purchaseNowISO.slice(0, 7);
+
+      const chargeMatricula =
+        metadata.isFirstBono === "true" || parseFloat(metadata.matriculaCost || "0") > 0;
+      const metodoFinal = payType.toLowerCase().includes("bizum") || payType === "z" ? "Bizum" : "TPV";
+      const bonoLabel = bonoName || "Bono de Clases";
+      const categoriaFinal = bonoLabel.toLowerCase().includes("suelta") ? "clase_suelta" : "bono";
+      const sedeFinal = ["castilla", "alcorcon", "studio 2"].includes(String(student?.sede || "").toLowerCase().trim())
+        ? "castilla"
+        : "tejar";
+
+      const buildCloudPagoRecord = (resolvedStudentId?: string | null, resolvedStudent?: any) => ({
+        id: txId,
+        numero_recibo: receiptCode,
+        fecha_hora: purchaseNowISO,
+        fecha_corta: fechaCorta,
+        hora_corta: horaCorta,
+        alumno_id: resolvedStudentId && isValidUUID(resolvedStudentId) ? resolvedStudentId : undefined,
+        alumno_nombre: resolvedStudent?.nombre_completo || studentName || "Alumno Online",
+        alumno_dni: resolvedStudent?.dni || undefined,
+        alumno_telefono: resolvedStudent?.telefono || undefined,
+        concepto: `Bono: ${bonoLabel}${chargeMatricula && metadata.matriculaCost ? ` (+${metadata.matriculaCost}€ Matrícula)` : ""} (TPV CaixaBank)`,
+        categoria: categoriaFinal,
+        importe: parseFloat(amountEuros),
+        metodo_pago: metodoFinal,
+        sede: sedeFinal,
+        atendido_por: "TPV Virtual Redsys CaixaBank",
+        notas: `Aut: ${authCode} | Pedido: ${order}${studentEmail ? ` | Email: ${studentEmail}` : ""}`,
+        periodo_mes: periodoMes,
+        estado: "Cobrado",
+      });
+
       if (student && targetStudentId) {
         const { updatedBalance } = computeNewBonoBalance(student, count);
-        const purchaseNowISO = new Date().toISOString();
+        const cloudPago = buildCloudPagoRecord(targetStudentId, student);
+        const updatedDireccion = upsertStudentPagoInDireccion(student.direccion, cloudPago);
 
         const updatePayload: Record<string, any> = {
-          plan_activo: bonoName || "Bono de Clases",
+          plan_activo: bonoLabel,
           clases_restantes: updatedBalance,
           creado_en: purchaseNowISO,
+          direccion: updatedDireccion,
         };
 
-        const chargeMatricula =
-          metadata.isFirstBono === "true" || parseFloat(metadata.matriculaCost || "0") > 0;
         if (chargeMatricula) {
           updatePayload.matricula_pagada = true;
           updatePayload.matricula_fecha = purchaseNowISO;
@@ -191,9 +233,10 @@ export async function POST(req: NextRequest) {
           await supabase
             .from("alumnos")
             .update({
-              plan_activo: bonoName || "Bono de Clases",
+              plan_activo: bonoLabel,
               clases_restantes: updatedBalance,
               creado_en: purchaseNowISO,
+              direccion: updatedDireccion,
             })
             .eq("id", targetStudentId);
         } else if (updateErr) {
@@ -201,17 +244,19 @@ export async function POST(req: NextRequest) {
         }
 
         console.log(
-          `[Redsys Webhook] 💃 Alumno ${student.nombre_completo || targetStudentId} actualizado con éxito: +${count} clases (Saldo: ${updatedBalance}, Caducidad: ${bonoCaducidadISO})`
+          `[Redsys Webhook] 💃 Alumno ${student.nombre_completo || targetStudentId} actualizado con éxito + cobro ${receiptCode} (${amountEuros}€) persistido en nube.`
         );
       } else if (!student && studentEmail) {
         try {
+          const initialPago = buildCloudPagoRecord(undefined, null);
           const newStudentPayload = {
             nombre_completo: studentName || "Alumno Online",
             email: studentEmail.trim().toLowerCase(),
             clases_restantes: isUnlimited ? 999 : count,
-            plan_activo: bonoName || "Bono de Clases",
+            plan_activo: bonoLabel,
             sede: "castilla",
             estado: "Activo",
+            direccion: upsertStudentPagoInDireccion("", initialPago),
           };
           const { data: createdStudent, error: createErr } = await supabase
             .from("alumnos")
@@ -222,37 +267,36 @@ export async function POST(req: NextRequest) {
           if (createdStudent) {
             student = createdStudent;
             targetStudentId = createdStudent.id;
-            console.log(`[Redsys Webhook] 🌟 Nuevo alumno registrado y activado: ${studentName} (${studentEmail})`);
+            const linkedPago = buildCloudPagoRecord(createdStudent.id, createdStudent);
+            await supabase
+              .from("alumnos")
+              .update({ direccion: upsertStudentPagoInDireccion(createdStudent.direccion, linkedPago) })
+              .eq("id", createdStudent.id);
+            console.log(`[Redsys Webhook] 🌟 Nuevo alumno registrado y cobro ${receiptCode} persistido: ${studentName} (${studentEmail})`);
           } else if (createErr) {
             console.warn("[Redsys Webhook] Info creación alumno:", createErr.message);
           }
         } catch (e) {
           console.warn("[Redsys Webhook] Fallback creación alumno:", e);
         }
-      }
-
-      // 5. Registrar transacción en la tabla pagos SIEMPRE (Garantía financiera y de arqueo)
-      try {
-        const metodoFinal = payType.toLowerCase().includes("bizum") ? "Bizum" : "TPV";
-        const validStudentUUID = isValidUUID(targetStudentId) ? targetStudentId : null;
-        await supabase.from("pagos").insert([
-          {
-            numero_recibo: `TPV-${order}`,
-            fecha_hora: new Date().toISOString(),
-            alumno_id: validStudentUUID,
-            alumno_nombre: student?.nombre_completo || studentName || "Alumno Online",
-            concepto: `${bonoName || "Bono de Clases"} (TPV CaixaBank)`,
-            categoria: "bono",
-            importe: parseFloat(amountEuros),
-            metodo_pago: metodoFinal,
-            sede: "castilla",
-            atendido_por: "TPV Virtual Redsys",
-            notas: `Aut: ${authCode} | Pedido: ${order}`,
-            estado: "Cobrado",
-          },
-        ]);
-      } catch (pagoErr) {
-        console.log("[Redsys Webhook] Info inserción pagos:", pagoErr);
+      } else {
+        // Fallback: persistir recibo en fila maestra de Dirección para no perder ningún cobro bancario
+        try {
+          const { data: fallbackRow } = await supabase
+            .from("alumnos")
+            .select("id, direccion")
+            .eq("id", FALLBACK_LEDGER_ROW_ID)
+            .maybeSingle();
+          if (fallbackRow) {
+            const unlinkedPago = buildCloudPagoRecord(undefined, null);
+            await supabase
+              .from("alumnos")
+              .update({ direccion: upsertStudentPagoInDireccion(fallbackRow.direccion, unlinkedPago) })
+              .eq("id", FALLBACK_LEDGER_ROW_ID);
+          }
+        } catch (fallbackLedgerErr) {
+          console.warn("[Redsys Webhook] Fallback ledger warning:", fallbackLedgerErr);
+        }
       }
 
       // 6. Registrar en registros de actividad para visibilidad en CRM
