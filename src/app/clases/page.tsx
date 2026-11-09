@@ -938,6 +938,7 @@ function ClasesContent() {
           isTeacher: calc?.exemptionType === "teacher",
           isRegularStudent: calc?.exemptionType === "regular",
           isPromo: calc?.exemptionType === "promo_septiembre" || isPromoSeptiembreBono(selectedBonoForPayment.id),
+          isExencionSolicitada: Boolean(isExencionSolicitada),
           calculatedPrice: calc?.bonoPrice,
           payMethod,
         })
@@ -2126,7 +2127,7 @@ function ClasesContent() {
                         <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
                         <div>
                           <span className="font-bold block">✓ Exención de Matrícula Aplicada (0,00 €)</span>
-                          <span className="text-[10px] text-emerald-300/80">Autorizada por Dirección para cobro en mostrador / transferencia</span>
+                          <span className="text-[10px] text-emerald-300/80">Autorizada por Dirección (aplicada en Tarjeta, Bizum, Transferencia y Recepción)</span>
                         </div>
                       </div>
                       <button

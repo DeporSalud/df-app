@@ -297,6 +297,49 @@ test("[R4.6] Alumno completamente nuevo en octubre (sin bono en septiembre ni cl
   assert.strictEqual(calc.totalToPay, 60.00);
 });
 
+test("[R4.7] Regresión Paula Ruiz Talavante (ficha real Supabase: Bono 4 Clases consolidado el 30/09, clases_restantes=0, direccion=null): 0,00€ matrícula", () => {
+  const paulaLiveRow = {
+    id: "9d83129a-8dd8-4cef-bf2f-903433e9e7a5",
+    nombre_completo: "Paula Ruiz Talavante",
+    email: "paularuiz0509@gmail.com",
+    plan_activo: "Bono 4 Clases",
+    clases_restantes: 0,
+    creado_en: "2026-09-30T13:47:43+00:00",
+    direccion: null,
+  };
+  assert.strictEqual(hasPurchasedSeptemberBono(paulaLiveRow), false);
+  assert.strictEqual(hasPaidSeasonMatricula(paulaLiveRow), true);
+
+  const calc = calculateBonoPriceAndMatricula({
+    bonoId: "Bono 4 clases",
+    basePrice: 45,
+    student: paulaLiveRow,
+  });
+  assert.strictEqual(calc.bonoPrice, 45.00);
+  assert.strictEqual(calc.matriculaCost, 0.00);
+  assert.strictEqual(calc.isExempt, true);
+  assert.strictEqual(calc.totalToPay, 45.00);
+});
+
+test("[R4.8] Alumno con recibo cloud DF_PAGOS (bono estándar o exencion_matricula: true) en direccion: 0,00€ matrícula en futuras renovaciones", () => {
+  const cloudExemptStudent = {
+    id: "00000000-0000-4000-8000-000000000099",
+    nombre_completo: "Alumna Exenta Cloud",
+    plan_activo: "Promo Septiembre • 4 Clases (No Alumno)",
+    clases_restantes: 0,
+    creado_en: "2026-09-12T10:00:00Z",
+    direccion: 'Calle Real 1||DF_PAGOS:[{"id":"redsys_1","fecha_hora":"2026-11-09T09:00:00.000Z","categoria":"bono","concepto":"Bono: Bono 4 Clases [Exención Matrícula] (TPV CaixaBank)","importe":45,"exencion_matricula":true,"estado":"Cobrado"}]',
+  };
+  assert.strictEqual(hasPaidSeasonMatricula(cloudExemptStudent), true);
+  const calc = calculateBonoPriceAndMatricula({
+    bonoId: "Bono 4 clases",
+    basePrice: 45,
+    student: cloudExemptStudent,
+  });
+  assert.strictEqual(calc.matriculaCost, 0.00);
+  assert.strictEqual(calc.totalToPay, 45.00);
+});
+
 console.log("\n================================================================================");
 console.log(`📊 STUDENT-APP VERIFICATION: ${testsPassed} PASSED, ${testsFailed} FAILED`);
 console.log("================================================================================\n");

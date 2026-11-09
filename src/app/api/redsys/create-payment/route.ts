@@ -138,9 +138,11 @@ export async function POST(req: NextRequest) {
       isFirstBonoOfYear,
       isTeacher: clientIsTeacher,
       isRegularStudent: clientIsRegular,
+      isExencionSolicitada,
       calculatedPrice,
       payMethod, // optional: 'z' for Bizum, 'T' for Card, or undefined for all
     } = body;
+    const exencionAutorizada = Boolean(isExencionSolicitada);
 
     const idClean = (bonoId || "").toLowerCase().trim();
 
@@ -323,6 +325,7 @@ function isValidUUID(str?: string | null): boolean {
       !isTeacher &&
       !isRegular &&
       !isAlreadyPaid &&
+      !exencionAutorizada &&
       (studentVerifiedInDb ? true : Boolean(isFirstBonoOfYear !== false));
 
     // Determinar precio base del bono
@@ -368,6 +371,7 @@ function isValidUUID(str?: string | null): boolean {
       isRegularStudent: isRegular ? "true" : "false",
       isPromo: isPromo ? "true" : "false",
       isSeptemberRenewal: isSeptemberRenewal ? "true" : "false",
+      isExencionAutorizada: exencionAutorizada ? "true" : "false",
       isFirstBono: chargeMatricula ? "true" : "false",
       matriculaCost: chargeMatricula ? (isSeptemberRenewal ? "7.50" : "15.00") : "0.00",
       totalAmount: totalEurosStr,

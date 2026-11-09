@@ -176,8 +176,10 @@ export async function POST(req: NextRequest) {
       const madridParts = fechaCorta.split("/");
       const periodoMes = madridParts.length === 3 ? `${madridParts[2]}-${madridParts[1]}` : purchaseNowISO.slice(0, 7);
 
+      const exencionAutorizada = metadata.isExencionAutorizada === "true";
       const chargeMatricula =
-        metadata.isFirstBono === "true" || parseFloat(metadata.matriculaCost || "0") > 0;
+        !exencionAutorizada &&
+        (metadata.isFirstBono === "true" || parseFloat(metadata.matriculaCost || "0") > 0);
       const metodoFinal = payType.toLowerCase().includes("bizum") || payType === "z" ? "Bizum" : "TPV";
       const bonoLabel = bonoName || "Bono de Clases";
       const categoriaFinal = bonoLabel.toLowerCase().includes("suelta") ? "clase_suelta" : "bono";
@@ -193,7 +195,8 @@ export async function POST(req: NextRequest) {
         alumno_nombre: resolvedStudent?.nombre_completo || studentName || "Alumno Online",
         alumno_dni: resolvedStudent?.dni || undefined,
         alumno_telefono: resolvedStudent?.telefono || undefined,
-        concepto: `Bono: ${bonoLabel}${chargeMatricula && metadata.matriculaCost ? ` (+${metadata.matriculaCost}€ Matrícula)` : ""} (TPV CaixaBank)`,
+        concepto: `Bono: ${bonoLabel}${chargeMatricula && metadata.matriculaCost ? ` (+${metadata.matriculaCost}€ Matrícula)` : exencionAutorizada ? " [Exención Matrícula]" : ""} (TPV CaixaBank)`,
+        exencion_matricula: exencionAutorizada || undefined,
         categoria: categoriaFinal,
         importe: parseFloat(amountEuros),
         metodo_pago: metodoFinal,
