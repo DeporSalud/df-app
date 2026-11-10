@@ -42,6 +42,7 @@ async function handleExpirationCheck(request: NextRequest) {
     let query = supabase
       .from("alumnos")
       .select("id, nombre_completo, email, plan_activo, clases_restantes, creado_en")
+      .neq("sede", "pilates")
       .not("clases_restantes", "is", null)
       .gt("clases_restantes", 0);
 

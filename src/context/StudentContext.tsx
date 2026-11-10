@@ -205,6 +205,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase
         .from("alumnos")
         .select("*")
+        .neq("sede", "pilates")
         .order("nombre_completo", { ascending: true });
 
       const { data: enrollments } = await supabase
@@ -429,6 +430,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       const { data } = await supabase
         .from("alumnos")
         .select("*")
+        .neq("sede", "pilates")
         .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail},direccion.ilike.%${cleanEmail}%`);
 
       if (data && data.length > 0) {
@@ -467,7 +469,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
     );
 
     if (!teacher) {
-      const { data } = await supabase.from("alumnos").select("*");
+      const { data } = await supabase.from("alumnos").select("*").neq("sede", "pilates");
       if (data && data.length > 0) {
         const refreshed = mergeTeachersFromAlumnosRows(data).filter((t) => t.active);
         setTeachersList(refreshed);
@@ -511,6 +513,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       const { data: existingList } = await supabase
         .from("alumnos")
         .select("*, alumnos_clases(*)")
+        .neq("sede", "pilates")
         .or(orClauses.join(","));
 
       if (existingList && existingList.length > 0) {
@@ -622,6 +625,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
       const { data: exactList, error: exactErr } = await supabase
         .from("alumnos")
         .select("*, alumnos_clases(*)")
+        .neq("sede", "pilates")
         .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail},direccion.ilike.%${cleanEmail}%`);
 
       if (!exactErr) {
@@ -635,6 +639,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
           const { data: gmailRows, error: gmailErr } = await supabase
             .from("alumnos")
             .select("*, alumnos_clases(*)")
+            .neq("sede", "pilates")
             .or("email.ilike.%@gmail.com,email.ilike.%@googlemail.com,direccion.ilike.%DF_ALT_AUTH%");
 
           if (!gmailErr && gmailRows) {
@@ -727,6 +732,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
           const { data: altMatches } = await supabase
             .from("alumnos")
             .select("*, alumnos_clases(*)")
+            .neq("sede", "pilates")
             .or(`telefono.ilike.%${digitsOnly.slice(-9)}%,dni.ilike.%${digitsOnly}%`)
             .limit(1);
           if (altMatches && altMatches.length > 0) {

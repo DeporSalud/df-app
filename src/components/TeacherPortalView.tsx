@@ -270,7 +270,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
       await syncReservasFromSupabase();
 
       // Find teacher in alumnos table or create fallback
-      const { data: studentList } = await supabase.from("alumnos").select("*");
+      const { data: studentList } = await supabase.from("alumnos").select("*").neq("sede", "pilates");
       const normName = normalizeText(teacherName);
       const explicitUUID = currentTeacher?.uuid || TEACHER_DB_ID_MAP[normName.toUpperCase()] || (currentTeacher?.id ? TEACHER_DB_ID_MAP[currentTeacher.id] : undefined);
 
@@ -510,7 +510,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
         }
 
         // Fetch all students from DB to enrich details
-        const { data: allDbStudents } = await supabase.from("alumnos").select("*");
+        const { data: allDbStudents } = await supabase.from("alumnos").select("*").neq("sede", "pilates");
         const dbMap = new Map((allDbStudents || []).map((s: any) => [s.id, s]));
 
         const attendees = sessionReservas.map(r => {
