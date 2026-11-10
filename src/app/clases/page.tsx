@@ -141,6 +141,21 @@ function ClasesContent() {
     }
   }, [isStudentAlumnoDF]);
 
+  // Si el alumno tiene Bono de Open Class activo y 0 clases regulares, abrir por defecto la pestaña Open Class al entrar sin ?tab=
+  useEffect(() => {
+    if (!tabParam && currentStudent) {
+      const planLower = (currentStudent.plan_activo || "").toLowerCase();
+      const hasBono =
+        planLower.includes("bono") ||
+        planLower.includes("suelta") ||
+        planLower.includes("pase") ||
+        (!planLower.includes("regular") && typeof currentStudent.clases_restantes === "number" && currentStudent.clases_restantes > 0);
+      if (hasBono && !currentStudent.es_regular) {
+        setActiveTab("openclass");
+      }
+    }
+  }, [tabParam, currentStudent?.id, currentStudent?.plan_activo, currentStudent?.clases_restantes, currentStudent?.es_regular]);
+
   useEffect(() => {
     let timer: NodeJS.Timeout | null = null;
     const handleUpdate = () => {
