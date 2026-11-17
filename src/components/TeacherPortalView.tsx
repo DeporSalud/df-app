@@ -6,11 +6,12 @@ import {
   UserCheck, Check, Clock, Users, ShieldAlert, Sparkles, Calendar, Search, 
   Lock, LogOut, KeyRound, ArrowLeft, ChevronRight, Flame, Ticket, GraduationCap, 
   CreditCard, Building2, Trash2, AlertTriangle, Tag, CheckCircle2, ShieldCheck, X, RefreshCw,
-  CalendarDays, BarChart3, MessageCircle, Filter, QrCode, Smartphone, Loader2
+  CalendarDays, BarChart3, MessageCircle, Filter, QrCode, Smartphone, Loader2, FolderOpen
 } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
 import { logActivity } from "@/lib/activityLogger";
 import AppModal, { ModalState } from "@/components/AppModal";
+import TeacherDocumentsPortalSection from "@/components/TeacherDocumentsPortalSection";
 import { useStudent, Teacher } from "@/context/StudentContext";
 import {
   getAllTeachersInSchedule,
@@ -1305,9 +1306,27 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
 
             <div className="flex items-center gap-2">
               <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("perfil");
+                  setSelectedClase(null);
+                  setTimeout(() => {
+                    document.getElementById("teacher-docs-heading")?.scrollIntoView({ behavior: "smooth" });
+                  }, 80);
+                }}
+                className="px-2.5 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
+                title="Mis Nóminas y Documentos"
+              >
+                <FolderOpen size={15} aria-hidden="true" />
+                <span>Nóminas</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setShowQrModal(true)}
-                className="px-3 py-2 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/30 transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
+                className="px-2.5 py-2 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/30 transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
                 title="Pase de Acceso al Torno / Salas"
+                aria-label="Mi QR Torno"
               >
                 <QrCode size={15} />
                 <span className="hidden sm:inline">Mi QR Torno</span>
@@ -2319,6 +2338,18 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
                   </div>
                 </div>
               </div>
+
+              {/* Gestión Documental Docente: Nóminas y Documentos */}
+              <TeacherDocumentsPortalSection
+                teacherUuid={
+                  teacherStudent?.id ||
+                  currentTeacher?.uuid ||
+                  TEACHER_DB_ID_MAP[teacherName.toUpperCase()] ||
+                  (currentTeacher?.id ? TEACHER_DB_ID_MAP[currentTeacher.id] : undefined)
+                }
+                teacherPin={currentTeacher?.pin || currentTeacher?.id}
+                teacherName={teacherName}
+              />
             </div>
           )}
 
@@ -2767,6 +2798,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
         </button>
 
         <button
+          type="button"
           onClick={() => {
             setActiveTab("perfil");
             setSelectedClase(null);
@@ -2777,7 +2809,7 @@ export default function TeacherPortalView({ initialTab = "mis_clases" }: { initi
         >
           <QrCode size={20} className={activeTab === "perfil" ? "text-[var(--color-secondary)] drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" : "text-slate-400"} />
           <span className={"text-[10px] mt-1 tracking-tight text-center " + (activeTab === "perfil" ? "text-[var(--color-secondary)] font-bold" : "text-slate-400")}>
-            Perfil & QR
+            Perfil & Docs
           </span>
         </button>
       </nav>

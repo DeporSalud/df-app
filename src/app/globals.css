@@ -84,6 +84,15 @@ h1, h2, h3, h4, h5, h6 {
   letter-spacing: 0.03em;
 }
 
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
 /* Animations */
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
