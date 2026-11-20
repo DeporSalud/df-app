@@ -48,8 +48,9 @@ export async function GET(req: NextRequest) {
       const { data } = await supabase.from("alumnos").select("*").eq("id", studentId).maybeSingle();
       initialStudentRow = data;
     }
-    if (!initialStudentRow && studentEmail) {
-      const { data } = await supabase.from("alumnos").select("*").ilike("email", studentEmail.trim().toLowerCase()).maybeSingle();
+    const cleanInitialEmail = (studentEmail || "").trim().toLowerCase();
+    if (!initialStudentRow && cleanInitialEmail && cleanInitialEmail.includes("@")) {
+      const { data } = await supabase.from("alumnos").select("*").neq("sede", "pilates").ilike("email", cleanInitialEmail).limit(1).maybeSingle();
       initialStudentRow = data;
     }
 
@@ -98,10 +99,12 @@ export async function GET(req: NextRequest) {
                 studentToUpdate = data;
               }
               if (!studentToUpdate && (metadata.studentEmail || studentEmail)) {
-                const emailToUse = (metadata.studentEmail || studentEmail).trim().toLowerCase();
-                const { data } = await supabase.from("alumnos").select("*").ilike("email", emailToUse).maybeSingle();
-                studentToUpdate = data;
-                if (studentToUpdate) targetUUID = studentToUpdate.id;
+                const emailToUse = String(metadata.studentEmail || studentEmail).trim().toLowerCase();
+                if (emailToUse && emailToUse.includes("@")) {
+                  const { data } = await supabase.from("alumnos").select("*").neq("sede", "pilates").ilike("email", emailToUse).limit(1).maybeSingle();
+                  studentToUpdate = data;
+                  if (studentToUpdate) targetUUID = studentToUpdate.id;
+                }
               }
 
               const receiptCode = `TPV-${order}`;

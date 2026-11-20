@@ -242,11 +242,14 @@ function isValidUUID(str?: string | null): boolean {
             .maybeSingle();
           dbStudent = data;
         }
-        if (!dbStudent && studentEmail) {
+        const cleanPayEmail = (studentEmail || "").trim().toLowerCase();
+        if (!dbStudent && cleanPayEmail && cleanPayEmail.includes("@")) {
           const { data } = await supabase
             .from("alumnos")
             .select("*")
-            .ilike("email", studentEmail.trim().toLowerCase())
+            .neq("sede", "pilates")
+            .ilike("email", cleanPayEmail)
+            .limit(1)
             .maybeSingle();
           dbStudent = data;
         }

@@ -177,8 +177,9 @@ export async function POST(req: NextRequest) {
           const { data } = await supabase.from("alumnos").select("*").eq("id", studentId).maybeSingle();
           dbStudent = data;
         }
-        if (!dbStudent && studentEmail) {
-          const { data } = await supabase.from("alumnos").select("*").ilike("email", studentEmail.trim().toLowerCase()).maybeSingle();
+        const cleanStripeEmail = (studentEmail || "").trim().toLowerCase();
+        if (!dbStudent && cleanStripeEmail && cleanStripeEmail.includes("@")) {
+          const { data } = await supabase.from("alumnos").select("*").neq("sede", "pilates").ilike("email", cleanStripeEmail).limit(1).maybeSingle();
           dbStudent = data;
         }
 

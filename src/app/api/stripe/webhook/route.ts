@@ -85,12 +85,14 @@ export async function POST(req: NextRequest) {
             student = data;
           }
 
-          const resolvedEmail = studentEmail || session.customer_details?.email;
-          if (!student && resolvedEmail) {
+          const resolvedEmail = (studentEmail || session.customer_details?.email || "").trim().toLowerCase();
+          if (!student && resolvedEmail && resolvedEmail.includes("@")) {
             const { data } = await supabase
               .from("alumnos")
               .select("id, clases_restantes, plan_activo, creado_en")
-              .ilike("email", resolvedEmail.trim().toLowerCase())
+              .neq("sede", "pilates")
+              .ilike("email", resolvedEmail)
+              .limit(1)
               .maybeSingle();
             student = data;
             if (student) targetStudentId = student.id;

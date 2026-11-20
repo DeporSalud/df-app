@@ -12,6 +12,17 @@ import {
   extractCleanAddress,
   parseLinkedAltAuth
 } from "@/lib/teacherRegistryService";
+import {
+  normalizeEmail,
+  normalizePhoneDigits,
+  normalizeDNI,
+  sanitizeDNIForStorage,
+  isValidComparableEmail,
+  isValidComparablePhone,
+  isValidComparableDNI,
+  matchesStudentName,
+  removeDiacritics
+} from "@/lib/identityUtils";
 
 export interface Student {
   id: string;
@@ -416,27 +427,13 @@ export function StudentProvider({ children }: { children: ReactNode }) {
   };
 
   const loginWithCredentials = async (emailInput: string, passwordInput: string): Promise<boolean> => {
-    const cleanEmail = emailInput.trim().toLowerCase();
-    const lookupEmail = cleanEmail === "fran.sarciat@gmail.com" ? "fransarciat@gmail.com" : cleanEmail;
-    
-    let match = students.find(
-      s => s.email?.toLowerCase() === lookupEmail || 
-           s.email?.toLowerCase() === cleanEmail ||
-           s.email?.toLowerCase().replace(/\./g, "") === cleanEmail.replace(/\./g, "") ||
-           parseLinkedAltAuth(s.raw_direccion)?.emails?.includes(cleanEmail)
-    );
-
-    if (!match) {
-      const { data } = await supabase
-        .from("alumnos")
-        .select("*")
-        .neq("sede", "pilates")
-        .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail},direccion.ilike.%${cleanEmail}%`);
-
-      if (data && data.length > 0) {
-        match = data[0];
-      }
+    const cleanEmail = normalizeEmail(emailInput);
+    if (!isValidComparableEmail(cleanEmail)) {
+      return false;
     }
+
+    const { student: matched } = await resolveStudentByEmailInput(cleanEmail);
+    let match = matched;
 
     if (!match && (cleanEmail.includes("fran") || cleanEmail.includes("sarciat") || cleanEmail.includes("caixa") || cleanEmail.includes("auditor"))) {
       const fran = students.find(s => s.nombre_completo.toLowerCase().includes("fran") || s.id === "demo_fran");
@@ -497,78 +494,116 @@ export function StudentProvider({ children }: { children: ReactNode }) {
 
   const registerStudent = async (studentData: RegisterStudentData): Promise<{ success: boolean; error?: string; requiresOtp?: boolean; email?: string }> => {
     try {
-      const cleanEmail = studentData.email.trim().toLowerCase();
-      const cleanPhone = studentData.telefono.replace(/\D/g, "").slice(-9);
-      const cleanName = studentData.nombre_completo.trim();
-      
-      // 1. Comprobar si ya existe un perfil de alumno previo (por email, alias vinculado, teléfono o nombre)
-      const orClauses: string[] = [`email.ilike.${cleanEmail}`, `direccion.ilike.%${cleanEmail}%`];
-      if (cleanPhone.length >= 9) {
-        orClauses.push(`telefono.ilike.%${cleanPhone}%`);
-      }
-      if (cleanName.length >= 4) {
-        orClauses.push(`nombre_completo.ilike.%${cleanName}%`);
+      const cleanName = (studentData.nombre_completo || "").trim().replace(/\s+/g, " ");
+      const cleanEmail = normalizeEmail(studentData.email);
+      const cleanPhoneDigits = normalizePhoneDigits(studentData.telefono);
+      const rawDniInput = (studentData.dni || "").trim();
+
+      if (cleanName.length < 2) {
+        return { success: false, error: "Por favor, introduce tu nombre y apellidos." };
       }
 
-      const { data: existingList } = await supabase
-        .from("alumnos")
-        .select("*, alumnos_clases(*)")
-        .neq("sede", "pilates")
-        .or(orClauses.join(","));
-
-      if (existingList && existingList.length > 0) {
-        // Priorizar el alumno que ya tenga clases o plan regular asignado
-        const existingStudent = existingList.find(s => 
-          (Array.isArray(s.alumnos_clases) && s.alumnos_clases.length > 0) ||
-          (s.plan_activo && !s.plan_activo.toLowerCase().includes("sin plan"))
-        ) || existingList[0];
-
-        // Actualizar datos de contacto en el perfil oficial
-        await supabase
-          .from("alumnos")
-          .update({
-            email: cleanEmail,
-            telefono: studentData.telefono.trim(),
-            ...(studentData.dni?.trim() ? { dni: studentData.dni.trim().toUpperCase() } : {}),
-            ...(studentData.fecha_nacimiento ? { fecha_nacimiento: studentData.fecha_nacimiento } : {}),
-            estado: "Activo"
-          })
-          .eq("id", existingStudent.id);
-
-        // Generar y enviar OTP para activar este perfil existente
-        await generateAndSendOtp(cleanEmail, existingStudent.nombre_completo);
-
-        return { 
-          success: true, 
-          requiresOtp: true, 
-          email: cleanEmail 
+      const domainPart = cleanEmail.split("@")[1] || "";
+      const domainTypos: Record<string, string> = {
+        "gamail.com": "gmail.com",
+        "gamil.com": "gmail.com",
+        "gmal.com": "gmail.com",
+        "gnail.com": "gmail.com",
+        "gmail.es": "gmail.com",
+        "hotmal.com": "hotmail.com",
+        "hotmai.com": "hotmail.com",
+        "hormail.com": "hotmail.com",
+        "outlok.com": "outlook.com",
+      };
+      if (domainTypos[domainPart]) {
+        return {
+          success: false,
+          error: `Parece que hay una errata en el correo («@${domainPart}»). ¿Querías escribir «@${domainTypos[domainPart]}»?`,
         };
       }
 
-      // Si es un alumno nuevo, registrarlo
+      if (!isValidComparableEmail(cleanEmail)) {
+        return { success: false, error: "Por favor, introduce un correo electrónico válido." };
+      }
+
+      if (!isValidComparablePhone(studentData.telefono)) {
+        return { success: false, error: "Por favor, introduce un número de teléfono móvil válido de 9 dígitos." };
+      }
+
+      if (rawDniInput && !isValidComparableDNI(rawDniInput)) {
+        return {
+          success: false,
+          error: "El DNI / NIE introducido no es válido. Introduce el documento completo con letra (ej. 12345678A) o déjalo en blanco.",
+        };
+      }
+
+      const cleanDni = sanitizeDNIForStorage(rawDniInput);
+
+      // 1. Comprobar EXCLUSIVAMENTE por email verificado/exacto (JAMÁS por nombre parcial, teléfono o DNI vacío/ajeno,
+      //    y JAMÁS sobrescribir fichas existentes desde un formulario público sin autenticar — Protección RGPD).
+      const { student: existingByEmail } = await resolveStudentByEmailInput(cleanEmail);
+
+      if (existingByEmail) {
+        const existingDni = sanitizeDNIForStorage(existingByEmail.dni);
+        const hasConflictingDni =
+          Boolean(cleanDni && existingDni && isValidComparableDNI(existingDni) && existingDni !== cleanDni);
+
+        const nameTokens = removeDiacritics(cleanName).split(/\s+/).filter(Boolean);
+        const isSamePersonByName =
+          nameTokens.length >= 2 &&
+          (matchesStudentName(existingByEmail.nombre_completo, cleanName) ||
+            matchesStudentName(cleanName, existingByEmail.nombre_completo));
+        const isExactName = removeDiacritics(existingByEmail.nombre_completo) === removeDiacritics(cleanName);
+
+        if (!hasConflictingDni && (isSamePersonByName || isExactName)) {
+          // Es el mismo alumno que ya tenía ficha con este correo: enviar OTP sin alterar datos previos en BD
+          const otpRes = await generateAndSendOtp(cleanEmail, existingByEmail.nombre_completo);
+          if (!otpRes.success) {
+            return { success: false, error: otpRes.error || "No se pudo enviar el código de verificación." };
+          }
+          return {
+            success: true,
+            requiresOtp: true,
+            email: cleanEmail,
+          };
+        }
+
+        // El correo ya pertenece a otra ficha distinta: no filtrar ningún dato personal (RGPD)
+        return {
+          success: false,
+          error:
+            "Este correo electrónico ya está vinculado a una ficha en Dance Factory. Si ya tienes cuenta pulsa «Iniciar Sesión», o utiliza otro correo electrónico personal para este registro.",
+        };
+      }
+
+      // 2. Alumno nuevo: crear su ficha limpia e independiente
       const planActivo = studentData.plan_activo || "Sin Plan Activo";
-      const remainingClasses = planActivo.includes("Bono 10") ? 10 : planActivo.includes("Bono 4") ? 4 : (planActivo === "Sin Plan Activo" ? 0 : null);
+      const remainingClasses = planActivo.includes("Bono 10")
+        ? 10
+        : planActivo.includes("Bono 4")
+        ? 4
+        : planActivo === "Sin Plan Activo"
+        ? 0
+        : null;
 
-      // Generate initial OTP and dispatch branded email via Hostinger SMTP
-      const otpRes = await generateAndSendOtp(cleanEmail, studentData.nombre_completo);
-      const generatedOtp = otpRes.code || Math.floor(100000 + Math.random() * 900000).toString();
+      const generatedCard = Math.floor(100000 + Math.random() * 900000).toString();
 
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from("alumnos")
         .insert([
           {
-            nombre_completo: studentData.nombre_completo.trim(),
+            nombre_completo: cleanName,
             email: cleanEmail,
-            telefono: studentData.telefono.trim(),
-            dni: studentData.dni?.trim() ? studentData.dni.trim().toUpperCase() : null,
-            nfc_token: generatedOtp,
+            telefono: cleanPhoneDigits || studentData.telefono.trim(),
+            dni: cleanDni,
+            nfc_token: generatedCard,
             sede: studentData.sede || "tejar",
             direccion: studentData.direccion?.trim() || null,
             fecha_nacimiento: studentData.fecha_nacimiento || null,
             plan_activo: planActivo,
             clases_restantes: remainingClasses,
-            estado: "Activo"
-          }
+            estado: "Activo",
+          },
         ])
         .select();
 
@@ -577,10 +612,20 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         return { success: false, error: error?.message || "No se pudo registrar la cuenta. Inténtalo de nuevo." };
       }
 
-      return { 
-        success: true, 
-        requiresOtp: true, 
-        email: cleanEmail 
+      const otpRes = await generateAndSendOtp(cleanEmail, cleanName);
+      if (!otpRes.success) {
+        return {
+          success: false,
+          error:
+            otpRes.error ||
+            "Tu ficha se ha creado, pero no se pudo enviar el correo de verificación. Pulsa de nuevo o entra en «Iniciar Sesión».",
+        };
+      }
+
+      return {
+        success: true,
+        requiresOtp: true,
+        email: cleanEmail,
       };
     } catch (err: any) {
       return { success: false, error: err.message || "Error inesperado durante el registro" };
@@ -590,19 +635,31 @@ export function StudentProvider({ children }: { children: ReactNode }) {
   const resolveStudentByEmailInput = async (
     emailInput: string
   ): Promise<{ student: any | null; dbReachable: boolean }> => {
-    const cleanEmail = emailInput.trim().toLowerCase();
+    const cleanEmail = normalizeEmail(emailInput);
+    if (!isValidComparableEmail(cleanEmail)) {
+      return { student: null, dbReachable: true };
+    }
+
     const lookupEmail = cleanEmail === "fran.sarciat@gmail.com" ? "fransarciat@gmail.com" : cleanEmail;
     const canonicalTarget = canonicalizeClientEmail(lookupEmail);
 
     const matchesStudentRow = (row: any): boolean => {
       if (!row) return false;
-      const rowEmail = String(row.email || "").trim().toLowerCase();
-      if (rowEmail && (rowEmail === cleanEmail || rowEmail === lookupEmail || canonicalizeClientEmail(rowEmail) === canonicalTarget)) {
+      const rowEmail = normalizeEmail(row.email);
+      if (
+        isValidComparableEmail(rowEmail) &&
+        (rowEmail === cleanEmail || rowEmail === lookupEmail || canonicalizeClientEmail(rowEmail) === canonicalTarget)
+      ) {
         return true;
       }
       const rawDir = row.raw_direccion || row.direccion || "";
       const alt = parseLinkedAltAuth(rawDir);
-      if (alt?.emails && alt.emails.some((e) => e === cleanEmail || canonicalizeClientEmail(e) === canonicalTarget)) {
+      if (
+        alt?.emails &&
+        alt.emails.some(
+          (e) => isValidComparableEmail(e) && (normalizeEmail(e) === cleanEmail || canonicalizeClientEmail(e) === canonicalTarget)
+        )
+      ) {
         return true;
       }
       return false;
@@ -626,21 +683,22 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         .from("alumnos")
         .select("*, alumnos_clases(*)")
         .neq("sede", "pilates")
-        .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail},direccion.ilike.%${cleanEmail}%`);
+        .or(`email.ilike.${lookupEmail},email.ilike.${cleanEmail},direccion.ilike.%DF_ALT_AUTH%`);
 
       if (!exactErr) {
         dbReachable = true;
-        if (exactList && exactList.length > 0) {
-          return { student: pickBestStudent(exactList), dbReachable: true };
+        const verifiedExact = (exactList || []).filter(matchesStudentRow);
+        if (verifiedExact.length > 0) {
+          return { student: pickBestStudent(verifiedExact), dbReachable: true };
         }
 
-        // Gmail/Googlemail dot-insensitive & DF_ALT_AUTH scan when direct ilike didn't match (e.g. cristinacortesb@gmail.com -> cristina.cortesb@gmail.com)
+        // Gmail/Googlemail dot-insensitive scan when direct ilike didn't match (e.g. cristinacortesb@gmail.com -> cristina.cortesb@gmail.com)
         if (canonicalTarget.endsWith("@gmail.com")) {
           const { data: gmailRows, error: gmailErr } = await supabase
             .from("alumnos")
             .select("*, alumnos_clases(*)")
             .neq("sede", "pilates")
-            .or("email.ilike.%@gmail.com,email.ilike.%@googlemail.com,direccion.ilike.%DF_ALT_AUTH%");
+            .or("email.ilike.%@gmail.com,email.ilike.%@googlemail.com");
 
           if (!gmailErr && gmailRows) {
             const matchedGmail = gmailRows.filter(matchesStudentRow);
@@ -678,7 +736,11 @@ export function StudentProvider({ children }: { children: ReactNode }) {
 
   const verifyStudentWithOtp = async (email: string, code: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const cleanEmail = email.trim().toLowerCase();
+      const cleanEmail = normalizeEmail(email);
+      if (!isValidComparableEmail(cleanEmail)) {
+        return { success: false, error: "Correo electrónico no válido." };
+      }
+
       const verification = await verifyOtpCode(cleanEmail, code);
 
       if (!verification.success) {
@@ -725,33 +787,7 @@ export function StudentProvider({ children }: { children: ReactNode }) {
         return { success: true };
       }
 
-      // Blindaje adicional por teléfono (últimos 9 dígitos) o DNI si el input contenía dígitos
-      const digitsOnly = cleanEmail.replace(/\D/g, "");
-      if (digitsOnly.length >= 8) {
-        try {
-          const { data: altMatches } = await supabase
-            .from("alumnos")
-            .select("*, alumnos_clases(*)")
-            .neq("sede", "pilates")
-            .or(`telefono.ilike.%${digitsOnly.slice(-9)}%,dni.ilike.%${digitsOnly}%`)
-            .limit(1);
-          if (altMatches && altMatches.length > 0) {
-            const resolvedStudent = altMatches[0];
-            if (typeof window !== "undefined") {
-              localStorage.setItem("df_auth_role", "alumno");
-              localStorage.setItem("df_student_session_id", resolvedStudent.id);
-              localStorage.setItem("df_current_student_data", JSON.stringify(resolvedStudent));
-            }
-            setUserRoleState("alumno");
-            setCurrentStudentIdState(resolvedStudent.id);
-            setIsAuthenticated(true);
-            await fetchStudents();
-            return { success: true };
-          }
-        } catch {}
-      }
-
-      // Si no existe ningún alumno registrado, NO insertar cuentas fantasma "Sin Plan Activo" en Supabase.
+      // Si no existe ningún alumno registrado, NO insertar cuentas fantasma ni cruzar con teléfonos/DNIs ajenos (RGPD).
       return {
         success: false,
         error: "No se encontró ninguna ficha de alumno registrada con este correo. Si se registró el email de tu padre/madre o tutor, usa ese correo o consulta en Recepción."

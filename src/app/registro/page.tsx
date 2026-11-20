@@ -21,6 +21,12 @@ import {
 } from "lucide-react";
 import { useStudent } from "@/context/StudentContext";
 import OtpVerificationModal from "@/components/OtpVerificationModal";
+import {
+  isValidComparableEmail,
+  isValidComparablePhone,
+  isValidComparableDNI,
+  sanitizeDNIForStorage,
+} from "@/lib/identityUtils";
 
 export default function RegistroPage() {
   const router = useRouter();
@@ -56,18 +62,44 @@ export default function RegistroPage() {
       return;
     }
 
-    if (!formData.nombre_completo.trim() || !formData.email.trim() || !formData.telefono.trim()) {
+    const cleanName = formData.nombre_completo.trim().replace(/\s+/g, " ");
+    const cleanEmail = formData.email.trim().toLowerCase();
+    const cleanPhone = formData.telefono.trim();
+    const rawDni = formData.dni.trim();
+
+    if (!cleanName || !cleanEmail || !cleanPhone) {
       setErrorMsg("Por favor, completa los campos obligatorios marcados con asterisco (*).");
+      return;
+    }
+
+    const nameWords = cleanName.split(/\s+/).filter((w) => w.length >= 2);
+    if (nameWords.length < 2) {
+      setErrorMsg("Por favor, introduce tu nombre y al menos un apellido (ej. Laura Sánchez).");
+      return;
+    }
+
+    if (!isValidComparableEmail(cleanEmail)) {
+      setErrorMsg("Por favor, introduce un correo electrónico válido.");
+      return;
+    }
+
+    if (!isValidComparablePhone(cleanPhone)) {
+      setErrorMsg("Por favor, introduce un número de teléfono móvil válido de 9 dígitos.");
+      return;
+    }
+
+    if (rawDni && !isValidComparableDNI(rawDni)) {
+      setErrorMsg("El DNI / NIE introducido no es válido. Escríbelo completo con su letra (ej. 12345678A) o déjalo vacío.");
       return;
     }
 
     setIsSubmitting(true);
 
     const res = await registerStudent({
-      nombre_completo: formData.nombre_completo.trim(),
-      email: formData.email.trim().toLowerCase(),
-      telefono: formData.telefono.trim(),
-      dni: formData.dni.trim().toUpperCase(),
+      nombre_completo: cleanName,
+      email: cleanEmail,
+      telefono: cleanPhone,
+      dni: sanitizeDNIForStorage(rawDni) || undefined,
       fecha_nacimiento: formData.fecha_nacimiento || undefined,
       sede: "tejar",
       plan_activo: "Sin Plan Activo"
@@ -75,7 +107,7 @@ export default function RegistroPage() {
 
     if (res.success) {
       // Transition to email verification screen
-      setRegisteredEmail(formData.email.trim().toLowerCase());
+      setRegisteredEmail(cleanEmail);
     } else {
       setErrorMsg(res.error || "Ocurrió un error al crear la cuenta. Inténtalo de nuevo.");
       setIsSubmitting(false);

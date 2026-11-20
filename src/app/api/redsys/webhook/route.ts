@@ -132,11 +132,14 @@ export async function POST(req: NextRequest) {
         student = data;
       }
 
-      if (!student && studentEmail) {
+      const cleanWebhookEmail = (studentEmail || "").trim().toLowerCase();
+      if (!student && cleanWebhookEmail && cleanWebhookEmail.includes("@")) {
         const { data } = await supabase
           .from("alumnos")
           .select("*")
-          .ilike("email", studentEmail.trim().toLowerCase())
+          .neq("sede", "pilates")
+          .ilike("email", cleanWebhookEmail)
+          .limit(1)
           .maybeSingle();
         student = data;
         if (student) targetStudentId = student.id;
